@@ -7,6 +7,7 @@ workflows:
       events:
         - push
       branch_patterns:
+        - pattern: main
         - pattern: ana
           include: true
 
@@ -23,38 +24,26 @@ workflows:
         - build/
 
     scripts:
-      - name: Clean Flutter
+      - name: Clean project
         script: flutter clean
 
       - name: Get packages
         script: flutter pub get
 
-      - name: Fix iOS pods (FULL RESET)
+      - name: Reset iOS Pods (FIX FIREBASE)
         script: |
           cd ios
-          rm -rf Pods Podfile.lock
+          rm -rf Pods Podfile.lock .symlinks
+          pod repo update
+          pod install
           cd ..
 
-      - name: Install Pods (Flutter-safe)
-        script: |
-          cd ios
-          pod install --repo-update
-          cd ..
-
-      - name: Build iOS Release
+      - name: Build iOS Release (no codesign)
         script: flutter build ios --release --no-codesign
 
-      - name: Create IPA
-        script: |
-          cd build/ios/iphoneos
-          rm -rf Payload
-          mkdir Payload
-          cp -r Runner.app Payload/
-          zip -r app.ipa Payload
-
     artifacts:
-      - build/ios/iphoneos/app.ipa
       - build/ios/iphoneos/*.app
+      - build/ios/iphoneos/*.ipa
 
     publishing:
       email:
