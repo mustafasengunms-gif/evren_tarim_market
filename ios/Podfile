@@ -1,13 +1,13 @@
-# Podfile
 platform :ios, '15.0'
 
-# Flutter'ın kendi yardımcı dosyasını dahil ediyoruz
-target_path = File.join(File.dirname(File.realpath(__FILE__)), '..', '..', 'flutter', 'packages', 'flutter_tools', 'bin', 'podhelper.rb')
-# Eğer üstteki yol bulamazsa standart yolu dene
-unless File.exist?(target_path)
-  target_path = File.expand_path(File.join(File.dirname(__FILE__), 'Flutter', 'podhelper.rb'))
-end
-require target_path
+# Flutter'ın otomatik oluşturduğu yapılandırma dosyasını çeker
+path_to_utils = File.expand_path(File.join('..', '..', '..', 'flutter', 'packages', 'flutter_tools', 'bin', 'podhelper.rb'), __FILE__)
+
+# Yukarıdaki yol özel bir kurulum değilse genellikle şudur:
+# (Eğer hata alırsanız alttaki satırı kullanın)
+# require File.expand_path(File.join('..', 'Flutter', 'podhelper.rb'), __FILE__)
+
+require File.expand_path(File.join('..', 'Flutter', 'podhelper.rb'), __FILE__)
 
 target 'Runner' do
   use_frameworks!
@@ -19,7 +19,9 @@ end
 post_install do |installer|
   installer.pods_project.targets.each do |target|
     flutter_additional_ios_build_settings(target)
+
     target.build_configurations.each do |config|
+      # Tüm podların deployment target'ını 15.0 olarak eşitle
       config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '15.0'
     end
   end
