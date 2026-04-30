@@ -11,38 +11,39 @@ dependencies:
     sdk: flutter
   flutter_localizations:
     sdk: flutter
-  cupertino_icons: ^1.0.8
+  cupertino_icons: 1.0.9 # Kilitli sürüm
 
   # --- VERİTABANI VE SİSTEM ---
-  sqflite: ^2.4.2
-  path: ^1.9.1
-  sqflite_common_ffi: ^2.4.0+2
-  synchronized: ^3.4.0+1
+  sqflite: 2.4.2+1
+  path: 1.9.1
+  sqflite_common_ffi: 2.4.0+3
+  synchronized: 3.4.0+1
 
-  # --- FIREBASE (iOS Modül ve Versiyon Çakışması Giderilmiş Sürümler) ---
-  firebase_core: ^3.1.1
-  cloud_firestore: ^5.0.2
-  firebase_storage: ^12.4.10  # Versiyon çakışmasını çözen sürüm
-  firebase_auth: ^5.1.1
+  # --- FIREBASE (Hata Alınan Derlemedeki Kilitli Sürümler) ---
+  # Bağımlılık çakışmasını önlemek için sürümler sabitlendi
+  firebase_core: 3.15.2
+  cloud_firestore: 5.6.12
+  firebase_storage: 12.4.10
+  firebase_auth: 5.7.0
 
   # --- MEDYA VE DOSYA YÖNETİMİ ---
-  image_picker: ^1.1.0
-  path_provider: ^2.1.5
-  file_picker: ^11.0.2
-  open_file: ^3.5.10
-  excel: ^4.0.0
+  image_picker: 1.2.2
+  path_provider: 2.1.5
+  file_picker: 11.0.2
+  open_file: 3.5.11
+  excel: 4.0.6
 
   # --- PDF VE PAYLAŞIM ---
-  pdf: ^3.12.0
-  share_plus: ^12.0.1
-  printing: ^5.14.3
-  intl: ^0.20.2
-  syncfusion_flutter_pdf: ^33.1.46
+  pdf: 3.12.0
+  share_plus: 12.0.2
+  printing: 5.14.3
+  intl: 0.20.2
+  syncfusion_flutter_pdf: 33.2.4
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
-  flutter_lints: ^6.0.0
+  flutter_lints: 6.0.0
 
 flutter:
   uses-material-design: true
