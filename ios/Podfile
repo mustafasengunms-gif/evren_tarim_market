@@ -1,29 +1,45 @@
-# Flutter araçlarını dahil etmek için tam yolu manuel olarak belirtiyoruz
-podhelper_path = File.expand_path(File.join('..', 'Flutter', 'podhelper.rb'), __FILE__)
-require podhelper_path
-
-# iOS 15.0 ve üzeri için destek (Projenin gereksinimine göre 13.0 da yapabilirsin)
 platform :ios, '15.0'
 
+ENV['COCOAPODS_DISABLE_STATS'] = 'true'
+
+project 'Runner', {
+  'Debug' => :debug,
+  'Profile' => :release,
+  'Release' => :release,
+}
+
+# Flutter root'u bul
+def flutter_root
+  generated_xcode_build_settings_path = File.expand_path(File.join('..', 'Flutter', 'Generated.xcconfig'), __FILE__)
+  unless File.exist?(generated_xcode_build_settings_path)
+    raise "#{generated_xcode_build_settings_path} bulunamadı. Önce flutter pub get çalıştır."
+  end
+
+  File.foreach(generated_xcode_build_settings_path) do |line|
+    matches = line.match(/FLUTTER_ROOT\=(.*)/)
+    return matches[1].strip if matches
+  end
+  raise "FLUTTER_ROOT bulunamadı"
+end
+
+# 🔥 DOĞRU podhelper BURASI (senin hatan buradaydı)
+require File.expand_path(File.join('packages', 'flutter_tools', 'bin', 'podhelper'), flutter_root)
+
+flutter_ios_podfile_setup
+
 target 'Runner' do
-  # Firebase/Firestore modül hatalarını çözmek için kritik ayar:
   use_frameworks! :linkage => :static
   use_modular_headers!
 
-  # Flutter paketlerini yükleyen ana fonksiyon
   flutter_install_all_ios_pods File.dirname(File.realpath(__FILE__))
 end
 
 post_install do |installer|
   installer.pods_project.targets.each do |target|
-    # Flutter'ın ek yapılandırma ayarlarını uygula
     flutter_additional_ios_build_settings(target)
 
-    # Tüm pod'ların iOS 15.0 ile uyumlu derlendiğinden emin olalım
     target.build_configurations.each do |config|
       config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '15.0'
-
-      # Xcode 15+ ve Codemagic'teki olası "User Script Sandboxing" hatasını engeller
       config.build_settings['ENABLE_USER_SCRIPT_SANDBOXING'] = 'NO'
     end
   end
