@@ -1,18 +1,59 @@
 workflows:
-  ios-workflow:
-    name: iOS Build
-    max_build_duration: 60
+  ios-production:
+    name: iOS Production Build
+    max_build_duration: 90
+
+    triggering:
+      events:
+        - push
+      branch_patterns:
+        - pattern: main
+          include: true
+          source: true
 
     environment:
       flutter: stable
       xcode: latest
+      cocoapods: default
+
+    cache:
+      cache_paths:
+        - ~/.pub-cache
+        - ios/Pods
+        - ios/.symlinks
+        - build/
 
     scripts:
-      - name: Get packages
+      - name: Clean project
+        script: flutter clean
+
+      - name: Get dependencies
         script: flutter pub get
 
-      - name: Build iOS (no codesign)
+      - name: Install iOS pods
+        script: |
+          cd ios
+          pod install
+          cd ..
+
+      - name: Build iOS Release (no codesign)
         script: flutter build ios --release --no-codesign
 
+      - name: Create IPA
+        script: |
+          cd build/ios/iphoneos
+          mkdir Payload
+          cp -r Runner.app Payload/
+          zip -r app.ipa Payload
+
     artifacts:
+      - build/ios/iphoneos/app.ipa
       - build/ios/iphoneos/*.app
+
+    publishing:
+      email:
+        recipients:
+          - mustafasengunms@gmail.com
+        notify:
+          success: true
+          failure: true
