@@ -1,28 +1,28 @@
+# ios/Podfile
 platform :ios, '13.0'
 
-# Flutter'ın hazırladığı yardımcı dosyayı dahil et
-prepare_command = 'ruby -e "require \'fileutils\'; FileUtils.touch(\'Flutter/Generated.xcconfig\')"'
-system(prepare_command)
-
-# Flutter config dosyasını yükle
+# Flutter'ın kendi yardımcı dosyasını içeri aktarır
 load File.join(File.dirname(File.realpath(__FILE__)), 'Flutter', 'podhelper.rb')
 
 target 'Runner' do
   use_frameworks!
   use_modular_headers!
 
-  # Standart Flutter Pod yükleme komutu (Hata veren satırı bununla düzelttik)
+  # Bu satır tüm Firebase ve Flutter paketlerini otomatik bağlar
   flutter_install_all_ios_pods File.dirname(File.realpath(__FILE__))
 end
 
 post_install do |installer|
   installer.pods_project.targets.each do |target|
-    flutter_additional_ios_build_settings(target)
+    # Flutter'ın standart ayarlarını güvenli şekilde uygula
+    if respond_to?(:flutter_additional_ios_build_settings)
+      flutter_additional_ios_build_settings(target)
+    end
 
     target.build_configurations.each do |config|
-      # Firebase ve diğer paketler için uyumluluk ayarları
       config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '13.0'
       config.build_settings['ENABLE_BITCODE'] = 'NO'
+      # Firestore modül hatasını önlemek için kritik ayar
       config.build_settings['CLANG_ALLOW_NON_MODULAR_INCLUDES_IN_FRAMEWORK_MODULES'] = 'YES'
     end
   end

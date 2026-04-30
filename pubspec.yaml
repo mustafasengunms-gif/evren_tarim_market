@@ -18,9 +18,8 @@ dependencies:
   path: 1.9.1
   sqflite_common_ffi: 2.4.0+3
   synchronized: 3.4.0+1
-
-  # --- FIREBASE (Hata Alınan Derlemedeki Kilitli Sürümler) ---
-  # Bağımlılık çakışmasını önlemek için sürümler sabitlendi
+  
+  # pubspec.yaml içindeki ilgili bölümü böyle güncelle:
   firebase_core: 3.15.2
   cloud_firestore: 5.6.12
   firebase_storage: 12.4.10
