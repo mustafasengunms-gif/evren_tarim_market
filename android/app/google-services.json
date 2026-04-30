@@ -1,0 +1,38 @@
+{
+  "project_info": {
+    "project_number": "83830242468",
+    "project_id": "evrentarimmarket",
+    "storage_bucket": "evrentarimmarket.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:83830242468:android:3bb6df2a93ba14f305fa31",
+        "android_client_info": {
+          "package_name": "com.evrentarim.evren_tarim_market"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "83830242468-vvkuf933n5e97023e8375cqklnonjrkq.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.evrentarim.evren_tarim_market",
+            "certificate_hash": "fe7c2bbdc833b74683db98d0a5b7b7629515c69a"
+          }
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBZ7s46uofpQzvCPetTfwDZv6qM2lS0Xdk"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

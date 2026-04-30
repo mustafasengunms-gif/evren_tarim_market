@@ -1,0 +1,38 @@
+include: package:flutter_lints/flutter.yaml
+
+analyzer:
+  # Projen büyüdükçe bazı dosyaları analiz dışı bırakmak istersen burayı kullanabilirsin
+  exclude:
+    - "**/*.g.dart"
+    - "**/*.freezed.dart"
+
+linter:
+  rules:
+    # --- Hata Önleyici Kurallar ---
+    # Fonksiyonların dönüş tiplerini zorunlu kılar (Muhasebe hesaplamaları için kritik).
+    always_declare_return_types: true
+    
+    # Boş kalan parametreler için tip belirtmeyi zorunlu tutar.
+    always_specify_types: false # Çok katı gelirse false yapabilirsin.
+
+    # Asenkron fonksiyonların Future döndürmesini sağlar.
+    avoid_void_async: true
+
+    # --- Kod Kalitesi ve Okunabilirlik ---
+    # Değişmeyen değişkenleri 'final' yapmaya zorlar (Daha güvenli kod).
+    prefer_final_locals: true
+    prefer_final_in_for_each: true
+
+    # Widget ağacında 'child' parametresini her zaman en sona koyar.
+    sort_child_properties_last: true
+
+    # Gereksiz 'const' kullanımını engeller veya gereken yerlerde uyarır.
+    prefer_const_constructors: true
+    prefer_const_literals_to_create_immutables: true
+
+    # --- Temizlik ---
+    # Üretim aşamasında print komutlarını temizlemeni sağlar.
+    avoid_print: true
+
+    # Satır sonlarında gereksiz boşlukları engeller.
+    no_leading_underscores_for_local_identifiers: true
