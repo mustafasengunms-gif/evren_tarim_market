@@ -1,27 +1,28 @@
+# Flutter araçlarını dahil etmek için tam yolu manuel olarak belirtiyoruz
+podhelper_path = File.expand_path(File.join('..', 'Flutter', 'podhelper.rb'), __FILE__)
+require podhelper_path
+
 platform :ios, '15.0'
-
-# Flutter'ın otomatik oluşturduğu yapılandırma dosyasını çeker
-path_to_utils = File.expand_path(File.join('..', '..', '..', 'flutter', 'packages', 'flutter_tools', 'bin', 'podhelper.rb'), __FILE__)
-
-# Yukarıdaki yol özel bir kurulum değilse genellikle şudur:
-# (Eğer hata alırsanız alttaki satırı kullanın)
-# require File.expand_path(File.join('..', 'Flutter', 'podhelper.rb'), __FILE__)
-
-require File.expand_path(File.join('..', 'Flutter', 'podhelper.rb'), __FILE__)
 
 target 'Runner' do
   use_frameworks!
   use_modular_headers!
 
-  flutter_install_all_ios_pods File.dirname(File.realpath(__FILE__))
+  # Eğer podhelper yüklendiyse bu metot çalışacaktır
+  if respond_to?(:flutter_install_all_ios_pods)
+    flutter_install_all_ios_pods File.dirname(File.realpath(__FILE__))
+  end
 end
 
 post_install do |installer|
   installer.pods_project.targets.each do |target|
-    flutter_additional_ios_build_settings(target)
+    # Metot tanımlı mı diye kontrol ederek hata patlamasını önlüyoruz
+    if respond_to?(:flutter_additional_ios_build_settings)
+      flutter_additional_ios_build_settings(target)
+    end
 
+    # Apple Silicon (M1/M2) ve güncel Xcode uyumluluğu için ek ayar
     target.build_configurations.each do |config|
-      # Tüm podların deployment target'ını 15.0 olarak eşitle
       config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '15.0'
     end
   end
