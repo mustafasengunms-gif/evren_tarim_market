@@ -1,39 +1,30 @@
+# Flutter'ın kendi yardımcı dosyasını dahil ediyoruz
+podhelper_path = File.expand_path(File.join('..', 'Flutter', 'podhelper.rb'), __FILE__)
+require podhelper_path
+
 platform :ios, '15.0'
 
-ENV['COCOAPODS_DISABLE_STATS'] = 'true'
-
-project 'Runner', {
-  'Debug' => :debug,
-  'Profile' => :release,
-  'Release' => :release,
-}
-
-def flutter_root
-  generated_xcode_build_settings_path = File.expand_path(File.join('..', 'Flutter', 'Generated.xcconfig'), __FILE__)
-  raise "#{generated_xcode_build_settings_path} missing" unless File.exist?(generated_xcode_build_settings_path)
-
-  File.foreach(generated_xcode_build_settings_path) do |line|
-    match = line.match(/FLUTTER_ROOT=(.*)/)
-    return match[1].strip if match
-  end
-
-  raise "FLUTTER_ROOT not found"
-end
-
-require File.expand_path(File.join('packages', 'flutter_tools', 'bin', 'podhelper'), flutter_root)
-
-flutter_ios_podfile_setup
-
 target 'Runner' do
+  # Firebase ve modül hatalarını önlemek için kritik ayar
+  use_frameworks! :linkage => :static
+  use_modular_headers!
+
+  # Flutter paketlerini yükle (Bu satır silinmemelidir!)
   flutter_install_all_ios_pods File.dirname(File.realpath(__FILE__))
 end
 
 post_install do |installer|
   installer.pods_project.targets.each do |target|
-    flutter_additional_ios_build_settings(target)
+    # Flutter ayarlarını güvenli bir şekilde uygula
+    if defined?(flutter_additional_ios_build_settings)
+      flutter_additional_ios_build_settings(target)
+    end
 
     target.build_configurations.each do |config|
+      # Sürüm uyumluluğu zorlaması
       config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '15.0'
+      # Xcode 15+ Sandbox hatası koruması
+      config.build_settings['ENABLE_USER_SCRIPT_SANDBOXING'] = 'NO'
     end
   end
 end
