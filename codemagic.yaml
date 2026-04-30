@@ -1,15 +1,14 @@
 workflows:
   ios-production:
     name: iOS Production Build
-    max_build_duration: 90
+    max_build_duration: 120
 
     triggering:
       events:
         - push
       branch_patterns:
-        - pattern: main
+        - pattern: ana
           include: true
-          source: true
 
     environment:
       flutter: stable
@@ -24,24 +23,31 @@ workflows:
         - build/
 
     scripts:
-      - name: Clean project
+      - name: Clean Flutter
         script: flutter clean
 
-      - name: Get dependencies
+      - name: Get packages
         script: flutter pub get
 
-      - name: Install iOS pods
+      - name: Fix iOS pods (FULL RESET)
         script: |
           cd ios
-          pod install
+          rm -rf Pods Podfile.lock
           cd ..
 
-      - name: Build iOS Release (no codesign)
+      - name: Install Pods (Flutter-safe)
+        script: |
+          cd ios
+          pod install --repo-update
+          cd ..
+
+      - name: Build iOS Release
         script: flutter build ios --release --no-codesign
 
       - name: Create IPA
         script: |
           cd build/ios/iphoneos
+          rm -rf Payload
           mkdir Payload
           cp -r Runner.app Payload/
           zip -r app.ipa Payload
