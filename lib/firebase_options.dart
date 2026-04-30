@@ -3,13 +3,15 @@ import 'package:flutter/foundation.dart' show defaultTargetPlatform, kIsWeb, Tar
 
 /// Default [FirebaseOptions] for use with your Firebase apps.
 ///
-/// Realized and fixed by your AI assistant for Evren Tarım Market project.
+/// Evren Tarım Market projesi için iOS desteği eklenmiş güncel versiyon.
 class DefaultFirebaseOptions {
   static FirebaseOptions get currentPlatform {
     if (kIsWeb) return web;
     switch (defaultTargetPlatform) {
       case TargetPlatform.android:
         return android;
+      case TargetPlatform.iOS: // iOS yönlendirmesi eklendi
+        return ios;
       default:
         throw UnsupportedError(
           'DefaultFirebaseOptions are not supported for this platform.',
@@ -19,7 +21,7 @@ class DefaultFirebaseOptions {
 
   static const FirebaseOptions web = FirebaseOptions(
     apiKey: 'AIzaSyBZ7s46uofpQzvCPetTfwDZv6qM2lS0Xdk',
-    appId: '1:83830242468:web:757e1...', // Web kullanmıyorsan burası kalsın
+    appId: '1:83830242468:web:757e1...',
     messagingSenderId: '83830242468',
     projectId: 'evrentarimmarket',
     authDomain: 'evrentarimmarket.firebaseapp.com',
@@ -32,5 +34,15 @@ class DefaultFirebaseOptions {
     messagingSenderId: '83830242468',
     projectId: 'evrentarimmarket',
     storageBucket: 'evrentarimmarket.appspot.com',
+  );
+
+  // iOS yapılandırması eksikti, Android API anahtarınla uyumlu şekilde eklendi
+  static const FirebaseOptions ios = FirebaseOptions(
+    apiKey: 'AIzaSyBZ7s46uofpQzvCPetTfwDZv6qM2lS0Xdk',
+    appId: '1:83830242468:ios:3bb6df2a93ba14f305fa31', // iOS App ID'niz
+    messagingSenderId: '83830242468',
+    projectId: 'evrentarimmarket',
+    storageBucket: 'evrentarimmarket.appspot.com',
+    iosBundleId: 'com.evrentarim.evrenTarimMarket', // Projenin Bundle ID'si
   );
 }
