@@ -1,4 +1,5 @@
-platform :ios, '13.0'
+
+# Cache temizleme denemesi - Mayis 2026platform :ios, '13.0'
 
 load File.join(File.dirname(File.realpath(__FILE__)), 'Flutter', 'podhelper.rb')
 
