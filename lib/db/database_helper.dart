@@ -9575,22 +9575,33 @@ CREATE TABLE IF NOT EXISTS tarim_firmalari (
       }
     }
 
+    // ---- MOBİL TARAFINDA ÇAKIŞMAYI ÖNLEYEN GÜNCELLEME ----
     final db = await instance.database;
-    int id = await db.insert('tarlalar', veri);
+
+    // Önce SQLite'a normal kaydet ve yerel ID'sini al
+    int localId = await db.insert('tarlalar', veri);
 
     try {
+      // Farklı telefonların aynı ID'yi üretip bulutta birbirini silmemesi için
+      // Firestore'dan benzersiz bir doküman ID'si ürettiriyoruz
+      var uuidRef = FirebaseFirestore.instance.collection('tarlalar').doc();
+      String benzersizBulutId = uuidRef.id;
+
       Map<String, dynamic> fbVeri = Map.from(veri);
-      fbVeri['id'] = id;
+      fbVeri['id'] = benzersizBulutId; // Bulut verisinde ID artık benzersiz
+      fbVeri['local_id'] = localId;    // İleride yerel eşitleme gerekirse diye sakla
       fbVeri['is_synced'] = 1;
 
-      await FirebaseFirestore.instance.collection('tarlalar').doc("TRL_$id").set(fbVeri, SetOptions(merge: true));
+      // Buluta asla çakışmayacak benzersiz ID ile kaydediyoruz
+      await FirebaseFirestore.instance.collection('tarlalar').doc("TRL_$benzersizBulutId").set(fbVeri, SetOptions(merge: true));
 
-      await db.update('tarlalar', {'is_synced': 1}, where: 'id = ?', whereArgs: [id]);
-      print("🚀 Mobil: TRL_$id kaydı yerel ve bulutta tamam.");
+      // Yerel veritabanını da güncelle (Eğer yerel tabloda id string değilse local_id veya sync durumunu işaretle)
+      await db.update('tarlalar', {'is_synced': 1}, where: 'id = ?', whereArgs: [localId]);
+      print("🚀 Mobil: TRL_$benzersizBulutId kaydı yerel ve bulutta tamam.");
     } catch (e) {
       print("❌ HATA: Bulut senkronizasyonunda patladı: $e");
     }
-    return id;
+    return localId;
   }
 
 
