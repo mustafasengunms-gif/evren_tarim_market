@@ -1,6 +1,21 @@
 platform :ios, '15.0'
 
-import File.join(File.dirname(File.expand_path(__FILE__)), '..', '.flutter-plugins-dependencies')
+# Hata veren 'import' satırı yerine Flutter'ın orijinal yükleme kuralı:
+plugin_pods = File.join(File.dirname(File.expand_path(__FILE__)), '..', '.flutter-plugins-dependencies')
+if File.exist?(plugin_pods)
+  def parse_KV_file(file, separator='=')
+    file_lines = [file]
+    if File.file?(file)
+      file_lines = File.read(file).split(/\r?\n/)
+    end
+    file_lines.each do |line|
+      parts = line.split(separator)
+      if parts.length >= 2
+        yield parts[0].strip, parts[1].strip
+      end
+    end
+  end
+end
 
 target 'Runner' do
   use_frameworks!
