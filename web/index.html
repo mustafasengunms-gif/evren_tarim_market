@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <base href="$FLUTTER_BASE_HREF">
+
+    <meta charset="UTF-8">
+    <meta content="IE=Edge" http-equiv="X-UA-Compatible">
+    <meta name="description" content="Evren Tarım Market Yönetim Sistemi">
+
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black">
+    <meta name="apple-mobile-web-app-title" content="evren_tarim_market">
+    <link rel="apple-touch-icon" href="icons/Icon-192.png">
+
+    <link rel="icon" type="image/png" href="favicon.png"/>
+
+    <title>Evren Tarım Market</title>
+    <link rel="manifest" href="manifest.json">
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
+        import { getFirestore } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+        import { getAuth } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
+        import { getStorage } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-storage.js";
+
+        const firebaseConfig = {
+          apiKey: "AIzaSyDQb-auztfquDvxk9tkHCk-0GjpKLw2Keo",
+          authDomain: "evrentarimmarket.firebaseapp.com",
+          projectId: "evrentarimmarket",
+          storageBucket: "evrentarimmarket.firebasestorage.app",
+          messagingSenderId: "83830242468",
+          appId: "1:83830242468:web:b3b818ec12f32d9105fa31"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        window.firebaseApp = app;
+        window.firebaseStorage = getStorage(app);
+        window.firebaseFirestore = getFirestore(app);
+    </script>
+</head>
+<body>
+<script src="flutter_bootstrap.js" async></script>
+
+<script>
+    window.addEventListener('load', function() {
+        // Flutter motorunun yüklenip yüklenmediğini kontrol eden döngü
+        var checkFlutter = setInterval(function() {
+            if (window._flutter && window._flutter.loader) {
+                clearInterval(checkFlutter); // Yüklendiğinde döngüyü durdur
+
+                window._flutter.loader.load({
+                    onEntrypointLoaded: async function(engineInitializer) {
+                        const appRunner = await engineInitializer.initializeEngine({
+                            // BEYAZ EKRANI ENGELLEYEN KRİTİK AYAR
+                            renderer: "html",
+                        });
+                        await appRunner.runApp();
+                    }
+                });
+            }
+        }, 100); // Her 100ms'de bir kontrol et
+    });
+</script>
+</body>
+</html>
