@@ -1,32 +1,49 @@
 platform :ios, '15.0'
 
-# Hata veren 'import' satırı yerine Flutter'ın orijinal yükleme kuralı:
-plugin_pods = File.join(File.dirname(File.expand_path(__FILE__)), '..', '.flutter-plugins-dependencies')
-if File.exist?(plugin_pods)
-  def parse_KV_file(file, separator='=')
-    file_lines = [file]
-    if File.file?(file)
-      file_lines = File.read(file).split(/\r?\n/)
-    end
-    file_lines.each do |line|
-      parts = line.split(separator)
-      if parts.length >= 2
-        yield parts[0].strip, parts[1].strip
-      end
-    end
+ENV['COCOAPODS_DISABLE_STATS'] = 'true'
+
+project 'Runner', {
+  'Debug' => :debug,
+  'Profile' => :release,
+  'Release' => :release,
+}
+
+def flutter_root
+  generated_xcode_build_settings_path = File.expand_path(
+    File.join('..', 'Flutter', 'Generated.xcconfig'),
+    __FILE__
+  )
+
+  unless File.exist?(generated_xcode_build_settings_path)
+    raise "#{generated_xcode_build_settings_path} must exist. Run flutter pub get first"
   end
+
+  File.foreach(generated_xcode_build_settings_path) do |line|
+    matches = line.match(/FLUTTER_ROOT\=(.*)/)
+    return matches[1].strip if matches
+  end
+
+  raise "FLUTTER_ROOT not found"
 end
+
+require File.expand_path(
+  File.join('packages', 'flutter_tools', 'bin', 'podhelper'),
+  flutter_root
+)
+
+flutter_ios_podfile_setup
 
 target 'Runner' do
   use_frameworks!
   use_modular_headers!
 
-  flutter_install_all_ios_pods File.dirname(File.expand_path(__FILE__))
+  flutter_install_all_ios_pods(File.dirname(File.realpath(__FILE__)))
 end
 
 post_install do |installer|
   installer.pods_project.targets.each do |target|
     flutter_additional_ios_build_settings(target)
+
     target.build_configurations.each do |config|
       config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '15.0'
     end
