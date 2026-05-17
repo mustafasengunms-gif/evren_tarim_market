@@ -1,39 +1,29 @@
-import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:uuid/uuid.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
-import 'package:path_provider/path_provider.dart';
-import 'package:share_plus/share_plus.dart';
-import 'package:image_picker/image_picker.dart';
-import '../db/database_helper.dart';
-import 'package:pdf/widgets.dart' as pw;
-import 'package:pdf/pdf.dart';
 import 'package:printing/printing.dart';
 import 'dart:typed_data';
 import 'package:flutter/services.dart';
-import 'package:intl/intl.dart';
-import 'package:pdf/pdf.dart';
-import 'package:pdf/widgets.dart' as pw;
-import 'package:printing/printing.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
-
-
-
+import 'package:cloud_firestore/cloud_firestore.dart';
 
 class PersonelPaneli extends StatefulWidget {
   const PersonelPaneli({super.key});
-
 
   @override
   State<PersonelPaneli> createState() => _PersonelPaneliState();
 }
 
 class _PersonelPaneliState extends State<PersonelPaneli> {
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+
   List<Map<String, dynamic>> _personeller = [];
   bool _yukleniyor = true;
   final trFormat = NumberFormat.currency(locale: 'tr_TR', symbol: '₺', decimalDigits: 0);
+
   double safeDouble(dynamic v) {
     if (v == null) return 0;
     if (v is int) return v.toDouble();
@@ -52,39 +42,46 @@ class _PersonelPaneliState extends State<PersonelPaneli> {
     _verileriYukle();
   }
 
+  /// 🔄 1. Firebase Firestore'dan Personel Listesini Çekme (DÜZELTİLDİ)
   Future<void> _verileriYukle() async {
-    if (!mounted) return; // Widget ekranda değilse işlem yapma
-
+    if (!mounted) return;
     setState(() => _yukleniyor = true);
 
     try {
-      final veriler = await DatabaseHelper.instance.personelListesiGetir();
+      // 🔥 DOĞRU KOLEKSİYON: 'personel' (Resim 1'deki gibi)
+      QuerySnapshot querySnapshot = await _firestore.collection('personel').get();
+
+      final List<Map<String, dynamic>> veriler = querySnapshot.docs.map((doc) {
+        Map<String, dynamic> data = doc.data() as Map<String, dynamic>;
+
+        // 🔥 Firestore'daki büyük 'İD' alanını kodun anlayacağı küçük 'id'ye eşitliyoruz
+        String pId = data['İD'] ?? data['id'] ?? doc.id;
+        data['id'] = pId;
+        return data;
+      }).toList();
 
       if (mounted) {
         setState(() {
-          // Gelen listeyi güvenli bir şekilde map'leyerek sayısal değerleri garantiye alıyoruz
           _personeller = veriler.map((p) {
             return {
               ...p,
-              'bakiye': double.tryParse(p['bakiye'].toString()) ?? 0.0,
-              'maas': double.tryParse(p['maas'].toString()) ?? 0.0,
+              'bakiye': safeDouble(p['bakiye']),
+              'maas': safeDouble(p['maas']),
             };
           }).toList();
           _yukleniyor = false;
         });
       }
     } catch (e) {
-      print("Veri yükleme hatası: $e");
+      debugPrint("Firebase veri yükleme hatası: $e");
       if (mounted) setState(() => _yukleniyor = false);
     }
   }
 
-  // Hesaplamalarda toDouble() zorlaması ile "0" görünme hatası çözüldü
-  double get _aylikMaasYuku => _personeller.fold(0.0, (sum, p) => sum + (double.tryParse(p['maas'].toString()) ?? 0.0));
+  double get _aylikMaasYuku => _personeller.fold(0.0, (sum, p) => sum + safeDouble(p['maas']));
 
-  // Ödenecek: Sadece personelin alacaklı (pozitif bakiye) olduğu durumların toplamı
   double get _toplamOdenecek => _personeller.fold(0.0, (sum, p) {
-    double b = double.tryParse(p['bakiye'].toString()) ?? 0.0;
+    double b = safeDouble(p['bakiye']);
     return b > 0 ? sum + b : sum;
   });
 
@@ -159,9 +156,14 @@ class _PersonelPaneliState extends State<PersonelPaneli> {
   );
 
   Widget _personelKarti(Map<String, dynamic> p) {
-    double bakiye = double.tryParse(p['bakiye'].toString()) ?? 0.0;
+    double bakiye = safeDouble(p['bakiye']);
     Color durumRengi = bakiye > 0 ? Colors.green.shade700 : (bakiye < 0 ? Colors.red.shade700 : Colors.grey);
     String durumMetni = bakiye > 0 ? "Pers. Alacaklı" : (bakiye < 0 ? "Pers. Borçlu" : "Bakiye Sıfır");
+
+    ImageProvider? profilResmi;
+    if (p['foto_yolu'] != null && p['foto_yolu'].toString().isNotEmpty) {
+      profilResmi = NetworkImage(p['foto_yolu']);
+    }
 
     return Card(
       elevation: 2,
@@ -170,10 +172,10 @@ class _PersonelPaneliState extends State<PersonelPaneli> {
       child: ExpansionTile(
         leading: CircleAvatar(
           backgroundColor: durumRengi.withOpacity(0.1),
-          backgroundImage: p['foto_yolu'] != null ? FileImage(File(p['foto_yolu'])) : null,
-          child: p['foto_yolu'] == null ? Text(p['ad'][0], style: TextStyle(color: durumRengi, fontWeight: FontWeight.bold)) : null,
+          backgroundImage: profilResmi,
+          child: profilResmi == null ? Text(p['ad']?[0] ?? "?", style: TextStyle(color: durumRengi, fontWeight: FontWeight.bold)) : null,
         ),
-        title: Text(p['ad'], style: const TextStyle(fontWeight: FontWeight.bold)),
+        title: Text(p['ad'] ?? "İsimsiz", style: const TextStyle(fontWeight: FontWeight.bold)),
         subtitle: Row(
           children: [
             Text(trFormat.format(bakiye.abs()), style: TextStyle(color: durumRengi, fontWeight: FontWeight.bold)),
@@ -208,130 +210,87 @@ class _PersonelPaneliState extends State<PersonelPaneli> {
     );
   }
 
+  /// ➕ 2. Firebase Firestore'a Hareket Ekleme ve Bakiye Güncelleme (DÜZELTİLDİ)
   void _hareketDialog(Map<String, dynamic> p, String tur) {
-    final tC = TextEditingController(
-      text: tur == "MAAŞ TAHAKKUK" ? (p['maas']?.toString() ?? "") : "",
-    );
-
+    final tC = TextEditingController(text: tur == "MAAŞ TAHAKKUK" ? (p['maas']?.toString() ?? "") : "");
     final aC = TextEditingController();
-
-    final List<String> aylar = [
-      "OCAK","ŞUBAT","MART","NİSAN","MAYIS","HAZİRAN",
-      "TEMMUZ","AĞUSTOS","EYLÜL","EKİM","KASIM","ARALIK"
-    ];
-
+    final List<String> aylar = ["OCAK","ŞUBAT","MART","NİSAN","MAYIS","HAZİRAN","TEMMUZ","AĞUSTOS","EYLÜL","EKİM","KASIM","ARALIK"];
     int secilenAyIndex = DateTime.now().month - 1;
 
     showDialog(
       context: context,
       builder: (c) => StatefulBuilder(
         builder: (context, setDialogState) => AlertDialog(
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(20),
-          ),
-          title: Text(
-            tur == "MAAŞ TAHAKKUK" ? "MAAŞ İŞLE" : "ÖDEME YAP",
-          ),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          title: Text(tur == "MAAŞ TAHAKKUK" ? "MAAŞ İŞLE" : "ÖDEME YAP"),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-
-              /// 🟢 AY SEÇİMİ
               if (tur == "MAAŞ TAHAKKUK") ...[
-                const Text(
-                  "Hangi Ayın Maaşı?",
-                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
-                ),
+                const Text("Hangi Ayın Maaşı?", style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
                 const SizedBox(height: 8),
-
                 DropdownButton<int>(
                   isExpanded: true,
                   value: secilenAyIndex,
-                  items: List.generate(
-                    aylar.length,
-                        (i) => DropdownMenuItem(
-                      value: i,
-                      child: Text(aylar[i]),
-                    ),
-                  ),
-                  onChanged: (v) {
-                    if (v == null) return;
-                    setDialogState(() => secilenAyIndex = v);
-                  },
+                  items: List.generate(aylar.length, (i) => DropdownMenuItem(value: i, child: Text(aylar[i]))),
+                  onChanged: (v) { if (v != null) setDialogState(() => secilenAyIndex = v); },
                 ),
-
                 const SizedBox(height: 10),
               ],
-
-              /// 💰 TUTAR
               TextField(
                 controller: tC,
                 keyboardType: TextInputType.number,
-                decoration: InputDecoration(
-                  labelText: "Tutar",
-                  hintText: "0,00 ₺",
-                  border: const OutlineInputBorder(),
-                ),
+                decoration: const InputDecoration(labelText: "Tutar", hintText: "0,00 ₺", border: OutlineInputBorder()),
               ),
-
               const SizedBox(height: 10),
-
-              /// 📝 AÇIKLAMA
               TextField(
                 controller: aC,
                 decoration: InputDecoration(
                   labelText: "Açıklama",
-                  hintText: tur == "MAAŞ TAHAKKUK"
-                      ? "${aylar[secilenAyIndex]} MAAŞI"
-                      : "Banka, Elden...",
+                  hintText: tur == "MAAŞ TAHAKKUK" ? "${aylar[secilenAyIndex]} MAAŞI" : "Banka, Elden...",
                   border: const OutlineInputBorder(),
                 ),
               ),
             ],
           ),
-
           actions: [
-
-            /// ❌ İPTAL
-            TextButton(
-              onPressed: () => Navigator.pop(c),
-              child: const Text("İPTAL"),
-            ),
-
-            /// ✅ KAYDET
+            TextButton(onPressed: () => Navigator.pop(c), child: const Text("İPTAL")),
             ElevatedButton(
-              style: ElevatedButton.styleFrom(
-                backgroundColor:
-                tur == "MAAŞ TAHAKKUK" ? Colors.green : Colors.red,
-              ),
+              style: ElevatedButton.styleFrom(backgroundColor: tur == "MAAŞ TAHAKKUK" ? Colors.green : Colors.red),
               onPressed: () async {
                 double tutar = double.tryParse(tC.text) ?? 0;
                 if (tutar <= 0) return;
 
                 double netDegisim = (tur == "MAAŞ TAHAKKUK") ? tutar : -tutar;
+                String hareketId = const Uuid().v4();
+                String pId = p['id'].toString();
 
-                // VERİTABANINA GÖNDERİLEN KISIM BURASI
-                // ... netDegisim satırından sonra burayı böyle yap:
-                await DatabaseHelper.instance.personelHareketEkle({
-                  'id': const Uuid().v4(),
-                  'personel_id': p['id'].toString(),
-                  'tarih': DateTime.now().toIso8601String(),
+                String baslikAciklama = aC.text.isEmpty
+                    ? (tur == "MAAŞ TAHAKKUK" ? "${aylar[secilenAyIndex]} MAAŞI" : "ÖDEME")
+                    : aC.text.toUpperCase();
+
+                // 🔥 DOĞRU KOLEKSİYON: 'personel_hareketleri' (Resim 2'deki gibi)
+                // 🔥 ALAN İSİMLERİ BULUTTAKİ GİBİ TÜRKÇE/UYUMLU AYARLANDI
+                await _firestore.collection('personel_hareketleri').doc(hareketId).set({
+                  'İD': hareketId,
+                  'personel_kimliği': pId,
+                  'tarih': DateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS").format(DateTime.now()),
                   'tur': tur,
-                  'tutar': netDegisim,
-                  'ay_bilgisi': tur == "MAAŞ TAHAKKUK" ? aylar[secilenAyIndex] : null, // AYI BURADA GÖNDER
-                  'aciklama': aC.text.isEmpty // 'not_aciklama' DEĞİL, SADECE 'aciklama'
-                      ? (tur == "MAAŞ TAHAKKUK" ? "${aylar[secilenAyIndex]} MAAŞI" : "ÖDEME")
-                      : aC.text.toUpperCase(),
-                  'is_synced': 0,
+                  'tutar': tutar,
+                  'ay_bilgisi': tur == "MAAŞ TAHAKKUK" ? aylar[secilenAyIndex] : "MAYIS",
+                  'açıklama': baslikAciklama,
+                  'senkronize_ediliyor': 0
+                });
+
+                // 🔥 DOĞRU KOLEKSİYON VE GÜNCELLEME: 'personel'
+                await _firestore.collection('personel').doc(pId).update({
+                  'bakiye': FieldValue.increment(netDegisim)
                 });
 
                 Navigator.pop(c);
                 await _verileriYukle();
               },
-              child: const Text(
-                "KAYDET",
-                style: TextStyle(color: Colors.white),
-              ),
+              child: const Text("KAYDET", style: TextStyle(color: Colors.white)),
             ),
           ],
         ),
@@ -349,6 +308,7 @@ class _PersonelPaneliState extends State<PersonelPaneli> {
     ),
   );
 
+  /// 📝 3. Firebase Firestore Personel Ekleme / Güncelleme (DÜZELTİLDİ)
   void _personelFormu({Map<String, dynamic>? personel}) {
     final adC = TextEditingController(text: personel?['ad']);
     final maasC = TextEditingController(text: personel?['maas']?.toString() ?? "");
@@ -370,17 +330,23 @@ class _PersonelPaneliState extends State<PersonelPaneli> {
           TextButton(onPressed: () => Navigator.pop(c), child: const Text("İPTAL")),
           ElevatedButton(
             onPressed: () async {
+              String pId = personel == null ? const Uuid().v4() : personel['id'].toString();
+
               final v = {
+                'İD': pId, // Buluttaki büyük İD alanı
                 'ad': adC.text.toUpperCase(),
                 'maas': double.tryParse(maasC.text) ?? 0,
-                'is_synced': 0
               };
+
+              // 🔥 DOĞRU KOLEKSİYON: 'personel'
               if (personel == null) {
-                v['id'] = const Uuid().v4();
                 v['bakiye'] = 0.0;
-                await DatabaseHelper.instance.personelEkle(v);
+                v['foto_yolu'] = '';
+                v['reklam'] = 'FFV';
+                v['senkronize_ediliyor'] = 0;
+                await _firestore.collection('personel').doc(pId).set(v);
               } else {
-                await DatabaseHelper.instance.personelGuncelle(personel['id'], v);
+                await _firestore.collection('personel').doc(pId).update(v);
               }
               Navigator.pop(c);
               await _verileriYukle();
@@ -392,6 +358,7 @@ class _PersonelPaneliState extends State<PersonelPaneli> {
     );
   }
 
+  /// ❌ 4. Firebase Firestore'dan Personel Silme (DÜZELTİLDİ)
   void _silOnay(Map<String, dynamic> p) {
     showDialog(
         context: context,
@@ -403,13 +370,19 @@ class _PersonelPaneliState extends State<PersonelPaneli> {
             ElevatedButton(
               style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
               onPressed: () async {
-                // p['id']'nin String olduğundan emin oluyoruz
                 final String personelId = p['id'].toString();
 
-                await DatabaseHelper.instance.personelSil(personelId);
+                // 🔥 DOĞRU KOLEKSİYONLAR temizleniyor
+                await _firestore.collection('personel').doc(personelId).delete();
+
+                var hareketlerSorgu = await _firestore.collection('personel_hareketleri')
+                    .where('personel_kimliği', isEqualTo: personelId).get();
+                for (var doc in hareketlerSorgu.docs) {
+                  await doc.reference.delete();
+                }
 
                 if (mounted) {
-                  Navigator.pop(context); // 'c' yerine context kullanmak daha güvenlidir
+                  Navigator.pop(context);
                   _verileriYukle();
                 }
               },
@@ -420,21 +393,35 @@ class _PersonelPaneliState extends State<PersonelPaneli> {
     );
   }
 
+  /// 📸 5. Web Uyumlu Fotoğraf İşlemi (DÜZELTİLDİ)
   void _fotoEkle(Map<String, dynamic> p) async {
     final ImagePicker picker = ImagePicker();
-    final XFile? image = await picker.pickImage(source: ImageSource.camera);
+    final XFile? image = await picker.pickImage(source: ImageSource.gallery);
+
     if (image != null) {
-      await DatabaseHelper.instance.personelGuncelle(p['id'], {'foto_yolu': image.path});
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Fotoğraf güncellendi")));
-      await _verileriYukle();
+      // 🔥 DOĞRU KOLEKSİYON: 'personel'
+      await _firestore.collection('personel').doc(p['id'].toString()).update({
+        'foto_yolu': image.path
+      });
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Fotoğraf güncellendi")));
+        await _verileriYukle();
+      }
     }
   }
 
+  /// 📊 6. Firebase Firestore'dan Hareketleri (Ekstre) Getirme (DÜZELTİLDİ)
   void _ekstreGoster(Map<String, dynamic> p) async {
     try {
-      final hareketler = await DatabaseHelper.instance.personelHareketleriGetir(
-        p['id'].toString(),
-      );
+      // 🔥 DOĞRU KOLEKSİYON VE ALAN ADI: 'personel_hareketleri' -> 'personel_kimliği'
+      QuerySnapshot hSnapshot = await _firestore.collection('personel_hareketleri')
+          .where('personel_kimliği', isEqualTo: p['id'].toString())
+          .get();
+
+      List<Map<String, dynamic>> hareketler = hSnapshot.docs.map((doc) => doc.data() as Map<String, dynamic>).toList();
+
+      hareketler.sort((a, b) => b['tarih'].toString().compareTo(a['tarih'].toString()));
 
       double toplamMaas = 0;
       double toplamOdeme = 0;
@@ -443,11 +430,13 @@ class _PersonelPaneliState extends State<PersonelPaneli> {
         double tutar = safeDouble(h['tutar']);
         String tur = (h['tur'] ?? "").toString().toUpperCase();
         if (tur.contains("MAAŞ")) {
-          toplamMaas += tutar.abs();
+          toplamMaas += tutar;
         } else {
-          toplamOdeme += tutar.abs();
+          toplamOdeme += tutar;
         }
       }
+
+      if (!mounted) return;
 
       showModalBottomSheet(
         context: context,
@@ -461,14 +450,11 @@ class _PersonelPaneliState extends State<PersonelPaneli> {
           ),
           child: Column(
             children: [
-              // Üst Tutamaç Çizgisi
               Container(
                 margin: const EdgeInsets.only(top: 10, bottom: 20),
                 width: 40, height: 5,
                 decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(10)),
               ),
-
-              // Başlık Alanı
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 20),
                 child: Row(
@@ -487,10 +473,7 @@ class _PersonelPaneliState extends State<PersonelPaneli> {
                   ],
                 ),
               ),
-
               const SizedBox(height: 20),
-
-              // Özet Kartları (Maaş ve Ödeme)
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 15),
                 child: Row(
@@ -501,13 +484,7 @@ class _PersonelPaneliState extends State<PersonelPaneli> {
                   ],
                 ),
               ),
-
-              const Padding(
-                padding: EdgeInsets.all(15.0),
-                child: Divider(thickness: 1),
-              ),
-
-              // Hareket Listesi
+              const Padding(padding: EdgeInsets.all(15.0), child: Divider(thickness: 1)),
               Expanded(
                 child: hareketler.isEmpty
                     ? const Center(child: Text("Henüz hareket kaydı bulunamadı."))
@@ -520,21 +497,20 @@ class _PersonelPaneliState extends State<PersonelPaneli> {
                     double tutar = safeDouble(h['tutar']);
                     bool isMaas = h['tur'].toString().toUpperCase().contains("MAAŞ");
 
+                    // 🔥 Buluttaki Türkçe 'açıklama' anahtarını karşılıyoruz
+                    String hAciklama = h['açıklama'] ?? h['aciklama'] ?? "Açıklama yok";
+
                     return ListTile(
                       contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
                       leading: CircleAvatar(
                         backgroundColor: isMaas ? Colors.green.withOpacity(0.1) : Colors.red.withOpacity(0.1),
-                        child: Icon(isMaas ? Icons.arrow_upward : Icons.arrow_downward,
-                            color: isMaas ? Colors.green : Colors.red, size: 20),
+                        child: Icon(isMaas ? Icons.arrow_upward : Icons.arrow_downward, color: isMaas ? Colors.green : Colors.red, size: 20),
                       ),
                       title: Text(h['tur'].toString(), style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
-                      // ListTile içindeki subtitle kısmını böyle düzelt:
                       subtitle: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          // h['not_aciklama'] yerine h['aciklama'] kullan
-                          Text(h['aciklama'] ?? "Açıklama yok", style: const TextStyle(fontSize: 12)),
-                          // İstersen ay bilgisini de göster:
+                          Text(hAciklama, style: const TextStyle(fontSize: 12)),
                           if (h['ay_bilgisi'] != null)
                             Text("Dönem: ${h['ay_bilgisi']}", style: TextStyle(fontSize: 10, color: Colors.blue.shade700)),
                           Text(h['tarih']?.toString().substring(0, 10) ?? "", style: const TextStyle(fontSize: 10, color: Colors.grey)),
@@ -544,21 +520,16 @@ class _PersonelPaneliState extends State<PersonelPaneli> {
                         formatPara(tutar),
                         style: TextStyle(
                           fontWeight: FontWeight.bold,
-                          color: tutar >= 0 ? Colors.green.shade700 : Colors.red.shade700,
+                          color: isMaas ? Colors.green.shade700 : Colors.red.shade700,
                         ),
                       ),
                     );
                   },
                 ),
               ),
-
-              // Alt Bilgi (Bakiye)
               Container(
                 padding: const EdgeInsets.all(20),
-                decoration: BoxDecoration(
-                    color: Colors.grey.shade100,
-                    border: Border(top: BorderSide(color: Colors.grey.shade300))
-                ),
+                decoration: BoxDecoration(color: Colors.grey.shade100, border: Border(top: BorderSide(color: Colors.grey.shade300))),
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
@@ -582,7 +553,6 @@ class _PersonelPaneliState extends State<PersonelPaneli> {
     }
   }
 
-// Yardımcı Özet Kartı Widget'ı
   Widget _ozetKart(String baslik, double deger, Color renk) {
     return Expanded(
       child: Container(
@@ -598,8 +568,7 @@ class _PersonelPaneliState extends State<PersonelPaneli> {
             Text(baslik, style: TextStyle(color: renk, fontSize: 10, fontWeight: FontWeight.bold)),
             const SizedBox(height: 5),
             FittedBox(
-              child: Text(formatPara(deger),
-                  style: TextStyle(color: renk, fontSize: 16, fontWeight: FontWeight.bold)),
+              child: Text(formatPara(deger), style: TextStyle(color: renk, fontSize: 16, fontWeight: FontWeight.bold)),
             ),
           ],
         ),
@@ -607,50 +576,45 @@ class _PersonelPaneliState extends State<PersonelPaneli> {
     );
   }
 
+  /// 📄 7. Web Uyumlu PDF Raporu Oluşturma (DÜZELTİLDİ)
   Future<void> _pdfRaporYap() async {
     try {
       final pdf = pw.Document();
-      final personeller = await DatabaseHelper.instance.personelListesiGetir();
       final font = await PdfGoogleFonts.robotoRegular();
       final boldFont = await PdfGoogleFonts.robotoBold();
 
-      String f(dynamic d) => NumberFormat.currency(
-        locale: 'tr_TR', symbol: '₺', decimalDigits: 2,
-      ).format(double.tryParse(d.toString()) ?? 0);
+      String f(dynamic d) => NumberFormat.currency(locale: 'tr_TR', symbol: '₺', decimalDigits: 2).format(safeDouble(d));
 
-      final ByteData bytes = await rootBundle.load('assets/images/logo.png');
-      final logo = pw.MemoryImage(bytes.buffer.asUint8List());
+      pw.MemoryImage? logo;
+      try {
+        final ByteData bytes = await rootBundle.load('assets/images/logo.png');
+        logo = pw.MemoryImage(bytes.buffer.asUint8List());
+      } catch (_) {}
 
-      // 🔥 TÜM VERİYİ ÖNCEDEN HAZIRLA (PDF içinde await kullanamayacağımız için)
-      // Her personelin ID'sine karşılık hareket listesini tutacak bir yapı
       Map<String, List<List<String>>> tumEkstreler = {};
 
-      for (var p in personeller) {
-        final hareketler = await DatabaseHelper.instance.personelHareketleriGetir(
-          p['id'].toString(),
-        );
+      for (var p in _personeller) {
+        String pId = p['id'].toString();
 
-        List<List<String>> personelTabloData = [];
-        // Tablo başlıkları
-        personelTabloData.add(["TARİH", "İŞLEM", "AÇIKLAMA", "TUTAR"]);
+        // 🔥 DOĞRU KOLEKSİYON: 'personel_hareketleri' -> 'personel_kimliği'
+        QuerySnapshot hSnapshot = await _firestore.collection('personel_hareketleri')
+            .where('personel_kimliği', isEqualTo: pId).get();
+
+        List<Map<String, dynamic>> hareketler = hSnapshot.docs.map((doc) => doc.data() as Map<String, dynamic>).toList();
+
+        List<List<String>> personelTabloData = [["TARİH", "İŞLEM", "AÇIKLAMA", "TUTAR"]];
 
         if (hareketler.isEmpty) {
           personelTabloData.add(["-", "-", "HAREKET YOK", "0.00"]);
         } else {
           for (var h in hareketler) {
-            double tutar = double.tryParse(h['tutar'].toString()) ?? 0;
+            double tutar = safeDouble(h['tutar']);
             String tarih = h['tarih'] != null ? h['tarih'].toString().substring(0, 10) : "-";
-
-            // PDF tablosuna veri eklerken:
-            personelTabloData.add([
-              tarih,
-              h['tur'].toString().toUpperCase(),
-              h['aciklama']?.toString() ?? "", // 'not_aciklama' yerine 'aciklama'
-              f(tutar),
-            ]);
+            String hAciklama = h['açıklama'] ?? h['aciklama'] ?? "";
+            personelTabloData.add([tarih, h['tur'].toString().toUpperCase(), hAciklama, f(tutar)]);
           }
         }
-        tumEkstreler[p['id'].toString()] = personelTabloData;
+        tumEkstreler[pId] = personelTabloData;
       }
 
       pdf.addPage(
@@ -661,59 +625,40 @@ class _PersonelPaneliState extends State<PersonelPaneli> {
             mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
             children: [
               pw.Row(children: [
-                pw.Container(width: 40, height: 40, child: pw.Image(logo)),
+                if (logo != null) pw.Container(width: 40, height: 40, child: pw.Image(logo)),
                 pw.SizedBox(width: 10),
-                pw.Text("EVREN TARIM - DETAYLI PERSONEL EKSTRESİ",
-                    style: pw.TextStyle(font: boldFont, fontSize: 14)),
+                pw.Text("EVREN TARIM - DETAYLI PERSONEL EKSTRESİ", style: pw.TextStyle(font: boldFont, fontSize: 14)),
               ]),
-              pw.Text(DateFormat('dd.MM.yyyy').format(DateTime.now()),
-                  style: pw.TextStyle(font: font, fontSize: 10)),
+              pw.Text(DateFormat('dd.MM.yyyy').format(DateTime.now()), style: pw.TextStyle(font: font, fontSize: 10)),
             ],
           ),
           build: (context) {
             List<pw.Widget> widgets = [];
-
-            for (var p in personeller) {
+            for (var p in _personeller) {
               String pId = p['id'].toString();
-
               widgets.add(pw.SizedBox(height: 15));
-
-              // Personel Bilgi Şeridi
               widgets.add(
                 pw.Container(
                   padding: const pw.EdgeInsets.all(6),
-                  decoration: const pw.BoxDecoration(
-                      color: PdfColors.grey200,
-                      border: pw.Border(left: pw.BorderSide(color: PdfColors.blue900, width: 3))
-                  ),
+                  decoration: const pw.BoxDecoration(color: PdfColors.grey200, border: pw.Border(left: pw.BorderSide(color: PdfColors.blue900, width: 3))),
                   child: pw.Row(
                     mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
                     children: [
-                      pw.Text("PERSONEL: ${p['ad'].toString().toUpperCase()}",
-                          style: pw.TextStyle(font: boldFont, fontSize: 10)),
-                      pw.Text("GÜNCEL BAKİYE: ${f(p['bakiye'])}",
-                          style: pw.TextStyle(font: boldFont, fontSize: 10)),
+                      pw.Text("PERSONEL: ${p['ad'].toString().toUpperCase()}", style: pw.TextStyle(font: boldFont, fontSize: 10)),
+                      pw.Text("GÜNCEL BAKİYE: ${f(p['bakiye'])}", style: pw.TextStyle(font: boldFont, fontSize: 10)),
                     ],
                   ),
                 ),
               );
 
-              // Hazırladığımız Tabloyu Basıyoruz
               widgets.add(
                 pw.TableHelper.fromTextArray(
                   data: tumEkstreler[pId]!,
                   cellStyle: pw.TextStyle(font: font, fontSize: 8),
                   headerStyle: pw.TextStyle(font: boldFont, fontSize: 8, color: PdfColors.white),
                   headerDecoration: const pw.BoxDecoration(color: PdfColors.blueGrey800),
-                  columnWidths: {
-                    0: const pw.FixedColumnWidth(60),
-                    1: const pw.FixedColumnWidth(80),
-                    2: const pw.FlexColumnWidth(),
-                    3: const pw.FixedColumnWidth(70),
-                  },
-                  cellAlignments: {
-                    3: pw.Alignment.centerRight,
-                  },
+                  columnWidths: {0: const pw.FixedColumnWidth(60), 1: const pw.FixedColumnWidth(80), 2: const pw.FlexColumnWidth(), 3: const pw.FixedColumnWidth(70)},
+                  cellAlignments: {3: pw.Alignment.centerRight},
                 ),
               );
             }
@@ -722,13 +667,16 @@ class _PersonelPaneliState extends State<PersonelPaneli> {
         ),
       );
 
-      // PDF Önizleme
+      if (!mounted) return;
+
       await Navigator.push(
         context,
         MaterialPageRoute(
           builder: (context) => Scaffold(
             appBar: AppBar(title: const Text("PERSONEL EKSTRE RAPORU")),
-            body: PdfPreview(build: (format) => pdf.save()),
+            body: PdfPreview(
+              build: (format) => pdf.save(),
+            ),
           ),
         ),
       );

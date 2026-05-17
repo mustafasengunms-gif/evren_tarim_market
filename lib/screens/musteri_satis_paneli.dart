@@ -54,7 +54,13 @@ class _MusteriSatisPaneliState extends State<MusteriSatisPaneli> {
 
   void _sepeteEkle(Map<String, dynamic> urun, int adet, double fiyat) {
     setState(() {
-      String ad = "${urun['marka'] ?? ''} ${urun['model'] ?? urun['urun'] ?? ''} ${urun['alt_model'] ?? ''}".trim();
+      // String birleştirmelerimizi güvenli yapıyoruz
+      String marka = (urun['marka'] ?? '').toString().trim();
+      String model = (urun['model'] ?? urun['urun'] ?? '').toString().trim();
+      String altModel = (urun['alt_model'] ?? urun['altmodel'] ?? '').toString().trim();
+
+      // Listelerde ve sepet başlığında görünecek tam ad
+      String ad = "$marka $model $altModel".replaceAll(RegExp(r'\s+'), ' ').trim();
 
       _sepet.add({
         "id": urun['id'].toString(),
@@ -62,6 +68,11 @@ class _MusteriSatisPaneliState extends State<MusteriSatisPaneli> {
         "adet": adet,
         "fiyat": fiyat,
         "toplam": adet * fiyat, // Burada 1 x 75000 = 75000 doğru.
+        // 🔥 İŞTE BURAYA YENİ ALANLARI EKLEDİK ABİ:
+        "kategori": urun['kategori'] ?? urun['kategori_ad'] ?? '',
+        "marka": marka,
+        "model": model,
+        "alt_model": altModel,
       });
 
       // 🔥 DEĞİŞİKLİK BURADA: Sıfırdan hesapla ki üzerine ekleme yapmasın
@@ -73,77 +84,126 @@ class _MusteriSatisPaneliState extends State<MusteriSatisPaneli> {
     });
   }
 
-
   Future<void> _satisiKaydet() async {
-    if (_islemYapiliyor || _sepet.isEmpty) {
-      print("ℹ️ [DEBUG] İşlem zaten sürüyor veya sepet boş.");
+
+    // 🔥 ÇİFT TIK / MÜKERRER KAYIT KİLİDİ
+    if (_islemYapiliyor) {
+      print("⛔ BLOKE: İşlem zaten devam ediyor!");
       return;
     }
 
-    setState(() => _islemYapiliyor = true);
+    // 🔒 LOCK
+    _islemYapiliyor = true;
+
+    if (mounted) {
+      setState(() {});
+    }
+
     print("\n🚀🚀🚀 [MÜHÜRLÜ SATIŞ BAŞLADI] 🚀🚀🚀");
 
-    // 🛡️ [YENİ ADIM] STOK KONTROL BARİYERİ (Eksiye düşmeyi engeller)
-    for (var item in _sepet) {
-      final String urunId = item['id'].toString();
-      final int satilanAdet = (double.tryParse(item['adet'].toString()) ?? 0.0).toInt();
+    try {
 
-      // Sayfadaki mevcut stok listesinden bu ürünü buluyoruz
-      final urunBilgisi = _stoklar.firstWhere(
-            (u) => u['id'].toString() == urunId,
-        orElse: () => {},
-      );
+      // 🛡️ [YENİ ADIM] STOK KONTROL BARİYERİ (Eksiye düşmeyi engeller)
+      for (var item in _sepet) {
+        final String urunId = item['id'].toString();
+        final int satilanAdet =
+        (double.tryParse(item['adet'].toString()) ?? 0.0).toInt();
 
-      if (urunBilgisi.isNotEmpty) {
-        // Veritabanındaki 'adet' veya 'stok_adet' alanını güvenli oku
-        int mevcutStok = (double.tryParse((urunBilgisi['adet'] ?? urunBilgisi['stok_adet'] ?? '0').toString()) ?? 0.0).toInt();
+        final urunBilgisi = _stoklar.firstWhere(
+              (u) => u['id'].toString() == urunId,
+          orElse: () => {},
+        );
 
-        // Eğer satılmak istenen adet eldeki stoktan fazlaysa satışı iptal et ve uyar
-        if (satilanAdet > mevcutStok) {
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text(
-                  "❌ Yetersiz Stok! ${item['ad']} ürününden elinde sadece $mevcutStok adet var, sen $satilanAdet adet satmaya çalışıyorsun!",
-                  style: const TextStyle(fontWeight: FontWeight.bold),
+        if (urunBilgisi.isNotEmpty) {
+
+          int mevcutStok = (double.tryParse(
+              (urunBilgisi['adet'] ??
+                  urunBilgisi['stok_adet'] ??
+                  '0').toString()) ??
+              0.0)
+              .toInt();
+
+          if (satilanAdet > mevcutStok) {
+
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text(
+                    "❌ Yetersiz Stok! ${item['ad']} ürününden elinde sadece $mevcutStok adet var, sen $satilanAdet adet satmaya çalışıyorsun!",
+                    style: const TextStyle(
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  backgroundColor: Colors.red[900],
+                  duration: const Duration(seconds: 4),
                 ),
-                backgroundColor: Colors.red[900],
-                duration: const Duration(seconds: 4),
-              ),
-            );
+              );
+            }
+
+            return;
           }
-          setState(() => _islemYapiliyor = false);
-          return; // 🛑 Satışı burada keser, aşağıya (kayıt aşamasına) geçirmez!
         }
       }
-    }
 
-    // 🆔 1. MÜŞTERİ ID ÇÖZÜMLEME
-    String mId = (widget.secilenMusteri['musteriId'] ??
-        widget.secilenMusteri['id'] ??
-        widget.secilenMusteri['tc'] ??
-        "").toString().trim();
+      // 🆔 1. MÜŞTERİ ID ÇÖZÜMLEME
+      String mId = (
+          widget.secilenMusteri['musteriId'] ??
+              widget.secilenMusteri['id'] ??
+              widget.secilenMusteri['tc'] ??
+              ""
+      ).toString().trim();
 
-    print("🆔 [ADIM 1] Kullanılacak Müşteri ID: '$mId'");
+      print("🆔 [ADIM 1] Kullanılacak Müşteri ID: '$mId'");
 
-    if (mId.isEmpty) {
-      print("❌ [HATA] Müşteri ID hiçbir alandan okunamadı!");
-      setState(() => _islemYapiliyor = false);
-      return;
-    }
+      if (mId.isEmpty) {
+        print("❌ [HATA] Müşteri ID hiçbir alandan okunamadı!");
+        return;
+      }
 
-    // 🔑 KESİN ID MÜHÜRLEME
-    String zamanMuhu = DateTime.now().millisecondsSinceEpoch.toString();
-    String nihaiIslemId = "HL_${mId}_$zamanMuhu";
+      // 🔥 5 SANİYELİK MÜKERRER ENGELLEYİCİ
+      String tekilIslemKey =
+          "${mId}_${DateTime.now().millisecondsSinceEpoch ~/ 5000}";
 
-    try {
+      // ☁️ FIRESTORE'DA AYNI SATIŞ VAR MI?
+      final mevcutSatis = await FirebaseFirestore.instance
+          .collection('satislar')
+          .where('islem_key', isEqualTo: tekilIslemKey)
+          .limit(1)
+          .get();
+
+      if (mevcutSatis.docs.isNotEmpty) {
+        print("⛔ MÜKERRER SATIŞ ENGELLENDİ!");
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text("Bu satış zaten kaydedilmiş!"),
+              backgroundColor: Colors.orange,
+            ),
+          );
+        }
+
+        return;
+      }
+
+      // 🔑 KESİN ID MÜHÜRLEME
+      String zamanMuhu =
+      DateTime.now().millisecondsSinceEpoch.toString();
+
+      String nihaiIslemId =
+          "HL_${mId}_$zamanMuhu";
+
       // 📦 2. STOK DÜŞ
       print("📦 [ADIM 2] Stoklar düşülüyor...");
 
-// 🛡️ [GÜVENLİ ADIM] SIFIR RİSKLİ STOK KONTROL BARİYERİ
+      // 🛡️ EK GÜVENLİ KONTROL
       for (var item in _sepet) {
-        final String urunId = item['id'].toString().trim();
-        final double satilanAdet = double.tryParse(item['adet'].toString()) ?? 0.0;
+
+        final String urunId =
+        item['id'].toString().trim();
+
+        final double satilanAdet =
+            double.tryParse(item['adet'].toString()) ?? 0.0;
 
         final urunBilgisi = _stoklar.firstWhere(
               (u) => u['id'].toString().trim() == urunId,
@@ -151,16 +211,21 @@ class _MusteriSatisPaneliState extends State<MusteriSatisPaneli> {
         );
 
         if (urunBilgisi.isNotEmpty) {
-          double mevcutStok = double.tryParse((urunBilgisi['adet'] ?? urunBilgisi['stok_adet'] ?? '0').toString()) ?? 0.0;
+
+          double mevcutStok = double.tryParse(
+              (urunBilgisi['adet'] ??
+                  urunBilgisi['stok_adet'] ??
+                  '0').toString()) ??
+              0.0;
 
           if (satilanAdet > mevcutStok) {
-            setState(() => _islemYapiliyor = false);
 
             if (mounted) {
               showDialog(
                 context: context,
                 barrierDismissible: false,
                 builder: (BuildContext dialogContext) {
+
                   return AlertDialog(
                     title: Row(
                       children: const [
@@ -175,96 +240,188 @@ class _MusteriSatisPaneliState extends State<MusteriSatisPaneli> {
                     ),
                     actions: [
                       TextButton(
-                        child: const Text("Anladım, Düzenle", style: TextStyle(fontWeight: FontWeight.bold)),
-                        onPressed: () => Navigator.of(dialogContext).pop(),
+                        child: const Text(
+                          "Anladım, Düzenle",
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        onPressed: () =>
+                            Navigator.of(dialogContext).pop(),
                       ),
                     ],
                   );
                 },
               );
             }
-            return; // 🛑 Stok yetersizse işlemi kes
+
+            return;
           }
         }
       }
 
-// 🎯 REZALETİN BİTTİĞİ YER: ÜSTTEKİ KONTROLDEN GEÇTİYSE ŞİMDİ STOKLARI GERÇEKTEN DÜŞÜYORUZ!
+      // 📦 GERÇEK STOK DÜŞÜMÜ
       for (var item in _sepet) {
-        final String urunId = item['id'].toString().trim();
-        final double satilanAdet = double.tryParse(item['adet'].toString()) ?? 0.0;
 
-        // İşte senin veritabanındaki adetleri eritecek olan asıl tetikçi:
-        await DatabaseHelper.instance.stokDus(urunId, satilanAdet);
+        final String urunId =
+        item['id'].toString().trim();
+
+        final double satilanAdet =
+            double.tryParse(item['adet'].toString()) ?? 0.0;
+
+        await DatabaseHelper.instance
+            .stokDus(urunId, satilanAdet);
       }
 
-// Artık gönül rahatlığıyla Adım 3'e geçebilir:
       print("💾 [ADIM 3] SQLite Hareket Kaydı...");
 
-      // 🧾 3. HAREKET VE SATIŞ VERİSİ HAZIRLA
+      // 🧾 ÜRÜN AÇIKLAMASI
+      String urunDetaylariAcliklamasi =
+      _sepet.map((item) =>
+      "${item['ad']} (${item['adet']} Adet)")
+          .join(", ");
+
+      String kategoriler = _sepet
+          .map((item) =>
+      (item['kategori'] ??
+          item['kategori_ad'] ??
+          ''))
+          .where((e) => e.isNotEmpty)
+          .join(", ");
+
+      String markalar = _sepet
+          .map((item) => (item['marka'] ?? ''))
+          .where((e) => e.isNotEmpty)
+          .join(", ");
+
+      String modeller = _sepet
+          .map((item) =>
+      (item['model'] ??
+          item['urun'] ??
+          ''))
+          .where((e) => e.isNotEmpty)
+          .join(", ");
+
+      String altModeller = _sepet
+          .map((item) =>
+      (item['alt_model'] ??
+          item['altmodel'] ??
+          ''))
+          .where((e) => e.isNotEmpty)
+          .join(", ");
+
+      // 🧾 HAREKET
       Map<String, dynamic> hareket = {
+
         'id': nihaiIslemId,
+        'islem_key': tekilIslemKey,
+
         'musteri_id': mId,
         'musteri_ad': widget.secilenMusteri['ad'],
         'veri_musteri_id': mId,
+
         'islem': 'SATIS',
+
         'tutar': _toplamTutar,
-        'aciklama': "Satış işlemi",
-        'tarih': DateFormat('dd.MM.yyyy').format(_secilenTarih),
+
+        'aciklama': urunDetaylariAcliklamasi,
+
+        'tarih': DateFormat('dd.MM.yyyy')
+            .format(_secilenTarih),
+
         'is_synced': 1,
+
+        'teslim_durumu': 'TESLİM EDİLMEDİ',
+
+        'kategori': kategoriler,
+        'marka': markalar,
+        'model': modeller,
+        'alt_model': altModeller,
       };
 
-      // 💾 4. SQLITE HAREKET KAYDI
-      print("💾 [ADIM 3] SQLite Hareket Kaydı (Mühürlü ID: $nihaiIslemId)...");
-      await DatabaseHelper.instance.musteriHareketEkle(hareket);
+      // 💾 SQLITE
+      print("💾 [ADIM 4] SQLite kayıt...");
+      await DatabaseHelper.instance
+          .musteriHareketEkle(hareket);
 
-      // ☁️ 5. FIRESTORE SATIŞ KAYDI
-      print("☁️ [ADIM 4] Firestore Satış Kaydı (Döküman ID: $nihaiIslemId)...");
-      await FirebaseFirestore.instance.collection('satislar').doc(nihaiIslemId).set({
+      // ☁️ FIRESTORE
+      print("☁️ [ADIM 5] Firestore kayıt...");
+
+      await FirebaseFirestore.instance
+          .collection('satislar')
+          .doc(nihaiIslemId)
+          .set({
+
         ...hareket,
-        'server_tarih': FieldValue.serverTimestamp(),
+
+        'server_tarih':
+        FieldValue.serverTimestamp(),
+
         'sube': widget.seciliSube,
+
         'sqlite_id': nihaiIslemId,
+
       });
 
-      // 💰 6. BAKİYE SENKRONİZASYONU
+      // 💰 BAKİYE SENKRON
       if (_odemeTipi == "AÇIK HESAP") {
-        print("💰 [ADIM 5] Bakiye senkronize ediliyor: $mId");
 
-        final mData = await DatabaseHelper.instance.getMusteri(mId);
-        double guncelBakiye = double.tryParse(mData['bakiye'].toString()) ?? 0.0;
+        print("💰 [ADIM 6] Bakiye senkronize ediliyor");
+
+        final mData =
+        await DatabaseHelper.instance.getMusteri(mId);
+
+        double guncelBakiye =
+            double.tryParse(
+                mData['bakiye'].toString()) ??
+                0.0;
 
         await FirebaseFirestore.instance
             .collection('musteriler')
             .doc(mId)
             .set({
+
           'bakiye': guncelBakiye,
+
           'son_islem': 'SATIS',
-          'guncelleme': FieldValue.serverTimestamp(),
+
+          'guncelleme':
+          FieldValue.serverTimestamp(),
+
         }, SetOptions(merge: true));
 
-        print("✅ Bakiye senkronizasyonu tamam: $guncelBakiye");
+        print("✅ Bakiye senkronizasyonu tamam");
       }
 
       print("🏁 SATIŞ MÜHÜRLENDİ VE TAMAMLANDI");
-      if (mounted) Navigator.pop(context, true);
-
-    } catch (e) {
-      print("🚨 SENKRONİZASYON AKSADI (İnternet Yoksa Yerel Kayıt Korunuyor): $e");
-
-      try {
-        await DatabaseHelper.instance.musteriHareketGuncelleSyncDurumu(nihaiIslemId, 0);
-      } catch (sqliteErr) {
-        print("Yerel sync durumu güncellenemedi: $sqliteErr");
-      }
 
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("Satış yerel hafızaya kaydedildi (İnternet yok): $e"), backgroundColor: Colors.orange),
-        );
         Navigator.pop(context, true);
       }
+
+    } catch (e) {
+
+      print("🚨 HATA: $e");
+
+      if (mounted) {
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+                "Satış kaydedilirken hata oluştu: $e"),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+
     } finally {
-      if (mounted) setState(() => _islemYapiliyor = false);
+
+      // 🔓 LOCK KALDIR
+      _islemYapiliyor = false;
+
+      if (mounted) {
+        setState(() {});
+      }
     }
   }
 
@@ -445,7 +602,6 @@ class _MusteriSatisPaneliState extends State<MusteriSatisPaneli> {
     ),
   );
 
-  // 1. ADIM: Mevcut _urunSec fonksiyonunu bu şekilde güncelle
   void _urunSec() {
     if (_stoklar.isEmpty) {
       _stoklariTazele().then((_) {
@@ -472,7 +628,7 @@ class _MusteriSatisPaneliState extends State<MusteriSatisPaneli> {
             const Divider(),
             Expanded(
               child: ListView.builder(
-                itemCount: _stoklar.length,
+                  itemCount: _stoklar.length,
                   itemBuilder: (c, i) {
                     final urun = _stoklar[i];
                     // Maliyeti sayıya çeviriyoruz
@@ -505,7 +661,6 @@ class _MusteriSatisPaneliState extends State<MusteriSatisPaneli> {
     );
   }
 
-  // 2. ADIM: _urunSec fonksiyonunun hemen altına bu yeni fonksiyonu yapıştır
   void _fiyatVeAdetSor(Map<String, dynamic> urun) {
     double maliyet = double.tryParse(urun['fiyat']?.toString() ?? '0') ?? 0.0;
 
@@ -517,7 +672,7 @@ class _MusteriSatisPaneliState extends State<MusteriSatisPaneli> {
       context: context,
       barrierDismissible: false, // Yanlışlıkla dışarı tıklayıp kapatılmasın
       builder: (context) => AlertDialog(
-        title: Text("${urun['marka']} ${urun['model']}"),
+        title: Text("${urun['marka'] ?? ''} ${urun['model'] ?? ''}"),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [

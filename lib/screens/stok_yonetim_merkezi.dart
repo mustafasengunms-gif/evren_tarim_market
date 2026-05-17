@@ -45,14 +45,16 @@ class _StokYonetimMerkeziState extends State<StokYonetimMerkezi> {
   List<String> _kategoriler = [];
   bool _tutarGozuksun = false;
 
-
   @override
   void initState() {
     super.initState();
-    // 2. widget.seciliSube yerine direkt 2 vererek "HEPSİ" ile açılmasını sağlıyoruz
     _aktifFiltreSube = 2;
     _verileriYukle();
-    _firebaseSenkronizeEt();
+
+    // 🎯 KRİTİK: Web platformunda senkronizasyon motorunu hiç tetikleme!
+    if (!kIsWeb) {
+      _firebaseSenkronizeEt();
+    }
   }
 
   void _subeTransfer(Map<String, dynamic> urun) {
@@ -529,94 +531,110 @@ AND adet <= 0
     // WEB İÇİN: FIREBASE'DEN VERİ ÇEK
     // =========================================================
     if (kIsWeb) {
+      try {
+        final firmaSnapshot =
+        await FirebaseFirestore.instance.collection('tarim_firmalari').get();
 
-      final firmaSnapshot =
-      await FirebaseFirestore.instance.collection('tarim_firmalari').get();
+        // hem doc.id hem cari_kod mühürlerini yakalayan akıllı harita
+        Map<String, String> firmaMap = {};
+        for (var doc in firmaSnapshot.docs) {
+          final d = doc.data();
+          String unvan = (d['ad'] ?? d['reklam'] ?? 'BİLİNMEYEN FİRMA').toString().toUpperCase().trim();
 
-      Map<String, String> firmaMap = {
-        for (var doc in firmaSnapshot.docs)
-          doc.id: (doc.data()['reklam'] ??
-              doc.data()['ad'] ??
-              'BİLİNMEYEN FİRMA')
-              .toString()
-              .toUpperCase()
-      };
-
-      final snapshot = await FirebaseFirestore.instance
-          .collection('stoklar')
-          .where('silindi', isEqualTo: 0)
-          .get();
-
-      final stoklar = snapshot.docs.map((doc) {
-
-        final data = doc.data();
-
-        String cKod = (data['cari_kod'] ?? '').toString();
-
-        // =====================================================
-        // FİYAT GARANTİ MOTORU (WEB)
-        // =====================================================
-
-        double fiyat1 =
-            double.tryParse(
-                (data['fiyat'] ?? '')
-                    .toString()
-                    .replaceAll(',', '.')
-            ) ?? 0.0;
-
-        double fiyat2 =
-            double.tryParse(
-                (data['alis_fiyati'] ?? '')
-                    .toString()
-                    .replaceAll(',', '.')
-            ) ?? 0.0;
-
-        double fiyat3 =
-            double.tryParse(
-                (data['alis_fiyatı'] ?? '')
-                    .toString()
-                    .replaceAll(',', '.')
-            ) ?? 0.0;
-
-        double gercekFiyat = 0.0;
-
-        if (fiyat1 > 0) {
-          gercekFiyat = fiyat1;
-        } else if (fiyat2 > 0) {
-          gercekFiyat = fiyat2;
-        } else if (fiyat3 > 0) {
-          gercekFiyat = fiyat3;
+          firmaMap[doc.id.toUpperCase().trim()] = unvan;
+          if (d['cari_kod'] != null) {
+            firmaMap[d['cari_kod'].toString().toUpperCase().trim()] = unvan;
+          }
         }
 
-        debugPrint("🌐 WEB FİYAT KONTROL");
-        debugPrint("Ürün: ${data['urun']}");
-        debugPrint("fiyat: $fiyat1");
-        debugPrint("alis_fiyati: $fiyat2");
-        debugPrint("alis_fiyatı: $fiyat3");
-        debugPrint("SONUÇ: $gercekFiyat");
+        final snapshot = await FirebaseFirestore.instance
+            .collection('stoklar')
+            .where('silindi', isEqualTo: 0)
+            .get();
 
-        return {
-          ...data,
+        final stoklar = snapshot.docs.map((doc) {
 
-          'firebase_id': doc.id,
+          final data = doc.data();
 
-          // UYGULAMA HER YERDE BUNU KULLANACAK
-          'fiyat': gercekFiyat,
+          String cKod = (data['cari_kod'] ?? '').toString().toUpperCase().trim();
 
-          // EK GARANTİ
-          'alis_fiyati': fiyat2,
-          'alis_fiyatı': fiyat3,
+          // =====================================================
+          // FİYAT GARANTİ MOTORU (WEB)
+          // =====================================================
 
-          'firma_unvani': firmaMap[cKod] ?? 'GENEL',
-        };
+          double fiyat1 =
+              double.tryParse(
+                  (data['fiyat'] ?? '')
+                      .toString()
+                      .replaceAll(',', '.')
+              ) ?? 0.0;
 
-      }).toList();
+          double fiyat2 =
+              double.tryParse(
+                  (data['alis_fiyati'] ?? '')
+                      .toString()
+                      .replaceAll(',', '.')
+              ) ?? 0.0;
 
-      if (mounted) {
-        setState(() {
-          _asilListe = List.from(stoklar);
-          _listeyiYenile();
-        });
+          double fiyat3 =
+              double.tryParse(
+                  (data['alis_fiyatı'] ?? '')
+                      .toString()
+                      .replaceAll(',', '.')
+              ) ?? 0.0;
+
+          double gercekFiyat = 0.0;
+
+          if (fiyat1 > 0) {
+            gercekFiyat = fiyat1;
+          } else if (fiyat2 > 0) {
+            gercekFiyat = fiyat2;
+          } else if (fiyat3 > 0) {
+            gercekFiyat = fiyat3;
+          }
+
+          debugPrint("🌐 WEB FİYAT KONTROL");
+          debugPrint("Ürün: ${data['urun']}");
+          debugPrint("fiyat: $fiyat1");
+          debugPrint("alis_fiyati: $fiyat2");
+          debugPrint("alis_fiyatı: $fiyat3");
+          debugPrint("SONUÇ: $gercekFiyat");
+
+          // Haritada firma eşleşmezse stok içindeki yedek alanlara bakar
+          String yedekFirma = (data['tarim_firmalari'] ?? data['firma_unvani'] ?? 'GENEL').toString().toUpperCase();
+          String firmaUnvani = firmaMap[cKod] ?? yedekFirma;
+
+          return {
+            ...data,
+
+            'firebase_id': doc.id,
+            'id': doc.id, // Web listeleme ve döngü güvenliği için eklendi
+
+            // UYGULAMA HER YERDE BUNU KULLANACAK
+            'fiyat': gercekFiyat,
+
+            // EK GARANTİ
+            'alis_fiyati': fiyat2,
+            'alis_fiyatı': fiyat3,
+
+            // Sayı dönüşüm güvenliği (Toplam adetlerin doğru hesaplanması için)
+            'adet': double.tryParse((data['adet'] ?? '0').toString().replaceAll(',', '.')) ?? 0.0,
+            'sube': (data['sube'] ?? 'TEFENNİ').toString().toUpperCase().trim(),
+            'silindi': int.tryParse((data['silindi'] ?? '0').toString()) ?? 0,
+
+            'firma_unvani': firmaUnvani,
+          };
+
+        }).toList();
+
+        if (mounted) {
+          setState(() {
+            _asilListe = List.from(stoklar);
+            _listeyiYenile();
+          });
+        }
+      } catch (e) {
+        debugPrint("❌ WEB VERİ YÜKLEME HATASI: $e");
       }
 
       return;
@@ -630,14 +648,14 @@ AND adet <= 0
 
     // Sorguyu COALESCE ile güçlendirdik, firma adı yoksa 'GENEL' yazacak
     final List<Map<String, dynamic>> stoklar = await db.rawQuery('''
-    SELECT 
-      s.*, 
-      COALESCE(f.ad, s.marka, 'GENEL') as firma_unvani
-    FROM stoklar s
-    LEFT JOIN tarim_firmalari f ON s.cari_kod = f.cari_kod
-    WHERE s.silindi = 0
-    ORDER BY s.id DESC
-  ''');
+  SELECT 
+    s.*, 
+    COALESCE(f.ad, s.marka, 'GENEL') as firma_unvani
+  FROM stoklar s
+  LEFT JOIN tarim_firmalari f ON s.cari_kod = f.cari_kod
+  WHERE s.silindi = 0
+  ORDER BY s.id DESC
+''');
 
     // =========================================================
     // FİYAT NORMALİZASYONU

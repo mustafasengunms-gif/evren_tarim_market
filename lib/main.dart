@@ -16,15 +16,12 @@ import 'package:flutter/services.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'firebase_options.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
-import 'package:cloud_firestore/cloud_firestore.dart';
-
-
 import 'package:flutter/foundation.dart'; // kIsWeb kontrolü için şart
+import 'screens/teslimat_takip_paneli.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
-import 'package:firebase_core/firebase_core.dart';
-import 'package:firebase_auth/firebase_auth.dart';
-import 'package:flutter_localizations/flutter_localizations.dart';
-// Kendi dosyalarını buraya eklemeyi unutma (DefaultFirebaseOptions, DatabaseHelper vb.)
+import 'package:sqflite/sqflite.dart'; // Standart sqflite eklentisi
+import 'package:sqflite_common_ffi_web/sqflite_ffi_web.dart'; // 👈 Yüklediğimiz Web paketi
 
 void main() async {
   // 1. Flutter motorunu başlat
@@ -55,7 +52,17 @@ void main() async {
     debugPrint("⚠️ Firebase Başlatma Hatası: $e");
   }
 
-  // 3. Yerel Veritabanını Hazırla
+  // ⭐ WEB İÇİN KRİTİK AYAR: Tarayıcı açılırken sqflite hatası vermemesi için motoru mühürlüyoruz
+  if (kIsWeb) {
+    try {
+      databaseFactory = databaseFactoryFfiWeb;
+      print("🌐 Web: Veritabanı fabrikası (FFI Web) main.dart içinde başarıyla mühürlendi.");
+    } catch (e) {
+      print("⚠️ Web Veritabanı Fabrikası Ayarlanırken Hata: $e");
+    }
+  }
+
+  // 3. Yerel Veritabanını Hazırla (Sadece Mobil Cihazlar İçin)
   if (!kIsWeb) {
     try {
       await DatabaseHelper.instance.database;
@@ -64,11 +71,10 @@ void main() async {
       // Arka plan servislerini tetikle
       _arkaPlanServisleriniBaslat();
     } catch (e) {
-      // Eğer hata zaten uygulamanın var olmasından kaynaklıysa boşuna log kirletmesin
       if (e.toString().contains('duplicate-app')) {
         print("ℹ️ Firebase zaten ayaktaymış, mühür devam ediyor.");
       } else {
-        debugPrint("⚠️ Firebase Başlatma Hatası: $e");
+        debugPrint("⚠️ SQLite Başlatma Hatası: $e");
       }
     }
   }
@@ -363,12 +369,20 @@ class GirisKapisi extends StatelessWidget {
               'durum': tip, // SIFIR veya 2. EL
               'fatura_no': "EXCEL_YUKLEME",
 
-              // 🔥 EN KRİTİK TAMİRAT BURASI:
-              // Excel'den yüklenen mal buluta giderken harf uyuşmazlığına takılmasın diye
-              // tüm fiyat ihtimallerini paketin içine mühürleyip gönderiyoruz!
+              // 🔀 Cari kodu buraya da bağlayalım
+              'cari_kod': cKod,
+
+              // 🔥 EKLEMELER BURADA:
+              // Bulutun veya listeleme ekranının doğrudan okuyabilmesi için
+              // firma ünvanını tüm olası anahtarlarla (keys) içeri gömüyoruz.
+              'firma_unvani': firmaAdi,
+              'firma_adi': firmaAdi,
+              'firma': firmaAdi,
+
+              // Fiyat ihtimalleri mühürleri
               'fiyat': fiyat,
-              'alis_fiyatı': fiyat, // Güncel bulut şeması için
-              'alis_fiyati': fiyat, // Eski Excel şeması garantisi için
+              'alis_fiyatı': fiyat,
+              'alis_fiyati': fiyat,
 
               'firebase_id': benzersizId,
               'tarih': tarihStr,
@@ -444,11 +458,86 @@ class GirisKapisi extends StatelessWidget {
                   children: [
                     _islemButon(context, "SIFIR EXCEL", Icons.upload_file, Colors.teal, () => _excelYukle(context, "SIFIR")),
                     _islemButon(context, "2.EL EXCEL", Icons.history, Colors.orange, () => _excelYukle(context, "2.EL")),
-                    _islemButon(context, "SİSTEMİ SIFIRLA", Icons.delete_forever, Colors.red, () => _verileriSifirla(context)),
+
+                    // 🔥 GÜNCELLENEN SEYYAR SAYAÇLI EMANET BUTONU (setState Hataları Temizlendi)
+                    FutureBuilder<int>(
+                      future: DatabaseHelper.instance.getTeslimEdilmeyenAdet(), // Veritabanından adeti okur
+                      builder: (context, snapshot) {
+                        int adet = snapshot.data ?? 0;
+
+                        return InkWell(
+                          onTap: () async {
+                            // Sayfaya gider, işlem yapıp geri döndüğünde (await sayesinde) ana sayfayı yeniler
+                            await Navigator.push(
+                                context,
+                                MaterialPageRoute(builder: (_) => const TeslimatTakipPaneli())
+                            );
+
+                            // 🔥 ÇÖZÜM: StatelessWidget içinde setState çalışmaz.
+                            // Bunun yerine context'i Element'e cast edip sayfayı güvenle tetikliyoruz.
+                            if (context is Element) {
+                              (context as Element).markNeedsBuild();
+                            }
+                          },
+                          child: Stack(
+                            alignment: Alignment.center,
+                            children: [
+                              Container(
+                                width: (MediaQuery.of(context).size.width - 42) / 2,
+                                padding: const EdgeInsets.all(15),
+                                decoration: BoxDecoration(
+                                    color: Colors.deepOrange.withOpacity(0.1),
+                                    borderRadius: BorderRadius.circular(10),
+                                    border: Border.all(color: Colors.deepOrange.withOpacity(0.3), width: 1.5)
+                                ),
+                                child: const Column(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Icon(Icons.local_shipping, color: Colors.deepOrange, size: 35),
+                                    SizedBox(height: 8),
+                                    Text(
+                                      "ÜRÜN / EMANET",
+                                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: Colors.black87),
+                                      textAlign: TextAlign.center,
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              // 🚨 UYARI LABALI (BADGE) - Eğer teslim edilmeyen mal varsa sağ üstte kırmızı daire çıkar
+                              if (adet > 0)
+                                Positioned(
+                                  top: 5,
+                                  right: 10,
+                                  child: Container(
+                                    padding: const EdgeInsets.all(6),
+                                    decoration: const BoxDecoration(
+                                      color: Colors.red, // Dikkat çekici kırmızı uyarı rengi
+                                      shape: BoxShape.circle,
+                                    ),
+                                    constraints: const BoxConstraints(
+                                      minWidth: 24,
+                                      minHeight: 24,
+                                    ),
+                                    child: Text(
+                                      '$adet',
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                      textAlign: TextAlign.center,
+                                    ),
+                                  ),
+                                ),
+                            ],
+                          ),
+                        );
+                      },
+                    ),
                     _islemButon(context, "PERSONEL İŞLERİ", Icons.people, Colors.indigo, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const PersonelPaneli()))),
                     _islemButon(context, "ÇEK UYARI", Icons.notification_important, Colors.redAccent, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const CekUyariPaneli()))),
                   ],
-                ),
+                )
               ],
             ),
           ),

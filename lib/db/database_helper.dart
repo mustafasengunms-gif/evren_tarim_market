@@ -15,6 +15,9 @@ import 'package:flutter/foundation.dart' show kIsWeb; // Web kontrolü için
 import 'package:cloud_firestore/cloud_firestore.dart'; // Firebase için
 import 'package:firebase_storage/firebase_storage.dart'; // Web'de resim saklamak için şart
 import 'package:image_picker/image_picker.dart';
+import 'package:flutter/foundation.dart'; // kIsWeb kontrolü için şart
+import 'package:sqflite_common_ffi_web/sqflite_ffi_web.dart';
+import 'package:flutter/foundation.dart'; // kIsWeb kontrolü için gerekli
 
 
 class DatabaseHelper {
@@ -53,12 +56,26 @@ class DatabaseHelper {
   }
 
   Future<Database> _initDB(String filePath) async {
+    // 🌐 WEB UYGULAMASI İÇİN TARAYICI MOTORUNU AKTİF EDİYORUZ
     if (kIsWeb) {
-      print("🌐 Web platformu: SQLite devre dışı.");
-      // Hata veren fonksiyon yerine direkt Unsupported fırlatıyoruz.
-      throw UnsupportedError("Web'de SQLite çalışmaz.");
+      print("🌐 Web Platformu: Tarayıcı IndexedDB üzerinden SQLite motoru hazırlanıyor...");
+      // main.dart'ta set ettiğimiz fabrikayı burada da garanti altına alıyoruz
+      databaseFactory = databaseFactoryFfiWeb;
+
+      return await openDatabase(
+        filePath, // Web ortamında doğrudan dosya adı yeterlidir, işletim sistemi yolu aranmaz
+        version: _databaseVersion,
+        onCreate: _createDB,
+        onUpgrade: _onUpgrade,
+        onOpen: (db) async {
+          await _tabloyuOnar(db);
+          herSeyiBuluttanIndir(); // Web'de açılışta verileri Firebase'den tazele
+        },
+      );
     }
 
+    // 📱 MOBİL CİHAZLAR İÇİN (Eski kodun güvenli hali)
+    print("📱 Mobil Platformu: SQLite dosya sistemi yükleniyor...");
     final dbPath = await getDatabasesPath();
     final path = join(dbPath, filePath);
 
@@ -463,6 +480,17 @@ CREATE TABLE IF NOT EXISTS tarim_firmalari (
     )
   ''');
 
+    await db.execute('''
+  CREATE TABLE IF NOT EXISTS eksper_kayitlari (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    arac_id INTEGER NOT NULL,          -- Hangi araca/makineye ait olduğu (İlişki sütunu)
+    hasar_notu TEXT,                   -- Eksper hasar veya durum notları
+    tarih TEXT,                        -- Kayıt tarihi (dd.MM.yyyy)
+    firebase_id TEXT,                  -- Bulut senkronizasyon mühürü
+    is_synced INTEGER DEFAULT 0        -- Senkronizasyon durumu (Varsayılan: 0)
+  )
+''');
+
     // =========================================================
     // BİÇER MÜŞTERİLERİ
     // =========================================================
@@ -550,28 +578,56 @@ CREATE TABLE IF NOT EXISTS tarim_firmalari (
     // =========================================================
 
     await db.execute('''
-    CREATE TABLE IF NOT EXISTS musteri_hareketleri (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+  CREATE TABLE IF NOT EXISTS musteri_hareketleri (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    firebase_id TEXT UNIQUE,
+    musteri_id TEXT NOT NULL,
+    musteri_ad TEXT NOT NULL,
+    islem TEXT NOT NULL,
+    tutar REAL DEFAULT 0,
+    aciklama TEXT,
+    tarih TEXT NOT NULL,
+    sube TEXT DEFAULT 'TEFENNİ',
+    son_guncelleme TEXT,
+    is_synced INTEGER DEFAULT 0,
+    teslim_durumu TEXT DEFAULT 'TESLİM EDİLDİ', -- Varsayılan Teslim Edildi
+    kategori TEXT DEFAULT '',                    -- 🔥 YENİ ALAN
+    marka TEXT DEFAULT '',                       -- 🔥 YENİ ALAN
+    model TEXT DEFAULT '',                       -- 🔥 YENİ ALAN
+    alt_model TEXT DEFAULT ''                    -- 🔥 YENİ ALAN
+  )
+''');
+// 1. Daha önce eklediğimiz teslim_durumu kontrolü
+    try {
+      await db.execute("ALTER TABLE musteri_hareketleri ADD COLUMN teslim_durumu TEXT DEFAULT 'TESLİM EDİLDİ';");
+    } catch (e) {
+      print("teslim_durumu sütunu zaten mevcut veya eklenirken hata oluştu: $e");
+    }
 
-      firebase_id TEXT UNIQUE,            -- 2. MÜHÜR
+// 2. 🔥 YENİ EKLENEN ÜRÜN DETAY SÜTUNLARI:
+    try {
+      await db.execute("ALTER TABLE musteri_hareketleri ADD COLUMN kategori TEXT DEFAULT '';");
+    } catch (e) {
+      print("kategori sütunu eklenirken hata veya zaten var: $e");
+    }
 
-      musteri_id TEXT NOT NULL,           -- ZORUNLU
-      musteri_ad TEXT NOT NULL,           -- ZORUNLU
+    try {
+      await db.execute("ALTER TABLE musteri_hareketleri ADD COLUMN marka TEXT DEFAULT '';");
+    } catch (e) {
+      print("marka sütunu eklenirken hata veya zaten var: $e");
+    }
 
-      islem TEXT NOT NULL,                -- ZORUNLU
+    try {
+      await db.execute("ALTER TABLE musteri_hareketleri ADD COLUMN model TEXT DEFAULT '';");
+    } catch (e) {
+      print("model sütunu eklenirken hata veya zaten var: $e");
+    }
 
-      tutar REAL DEFAULT 0,
-
-      aciklama TEXT,
-
-      tarih TEXT NOT NULL,                -- ZORUNLU
-
-      sube TEXT DEFAULT 'TEFENNİ',
-
-      son_guncelleme TEXT,
-      is_synced INTEGER DEFAULT 0
-    )
-  ''');
+    try {
+      await db.execute("ALTER TABLE musteri_hareketleri ADD COLUMN alt_model TEXT DEFAULT '';");
+    } catch (e) {
+      print("alt_model sütunu eklenirken hata veya zaten var: $e");
+    }
 
     // =========================================================
     // MÜŞTERİLER
@@ -632,6 +688,21 @@ CREATE TABLE IF NOT EXISTS tarim_firmalari (
       is_synced INTEGER DEFAULT 0
     )
   ''');
+
+    await db.execute('''
+  CREATE TABLE IF NOT EXISTS bicer_bakimlari (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    bicer_id TEXT NOT NULL,
+    usta TEXT,
+    aciklama TEXT,
+    parca_adi TEXT,          -- 👈 Logda eksik olduğunu söylediği sütun eklendi
+    tutar REAL DEFAULT 0.0,
+    tarih TEXT,
+    sezon TEXT,              -- 👈 Logda sorguya dahil edilen sezon sütunu eklendi
+    is_synced INTEGER DEFAULT 0
+  )
+''');
+
 
     // =========================================================
     // BAKIMLAR
@@ -1088,10 +1159,19 @@ CREATE TABLE IF NOT EXISTS tarim_firmalari (
     }
   }
   Future<bool> hareketVarMi(String id) async {
+    if (kIsWeb) {
+      // Web'de SQLite olmadığı için şimdilik false döndürerek çökmesini engelliyoruz
+      return false;
+    }
     final db = await instance.database;
-    var res = await db.query("tarim_firma_hareketleri", where: "id = ?", whereArgs: [id]);
-    return res.isNotEmpty;
+    final List<Map<String, dynamic>> sonuc = await db.query(
+      'tarim_firma_hareketleri',
+      where: 'stok_id = ? OR ana_stok_id = ?',
+      whereArgs: [id, id],
+    );
+    return sonuc.isNotEmpty;
   }
+
 
 
   Future<void> tarimfirmaHareketiEkle(Map<String, dynamic> h) async {
@@ -3012,6 +3092,8 @@ CREATE TABLE IF NOT EXISTS tarim_firmalari (
       'aciklama': (veri['aciklama'] ?? '').toString(),
       'tarih': veri['tarih'] ?? DateFormat('dd.MM.yyyy').format(DateTime.now()),
       'is_synced': kIsWeb ? 1 : 0,
+      // 🔥 YENİ ALAN: Eğer veri içinden geliyorsa onu al, gelmiyorsa eski verileri bozmamak için 'TESLİM EDİLDİ' yap.
+      'teslim_durumu': veri['teslim_durumu'] ?? 'TESLİM EDİLDİ',
     };
 
     // --- WEB İÇİN: DOĞRUDAN FIREBASE İŞLEMLERİ ---
@@ -3116,6 +3198,31 @@ CREATE TABLE IF NOT EXISTS tarim_firmalari (
 
     return localId;
   }
+
+  Future<int> getTeslimEdilmeyenAdet() async {
+
+    final db = await instance.database;
+
+    final result = await db.rawQuery('''
+
+    SELECT COUNT(*) as adet
+
+    FROM musteri_hareketleri
+
+    WHERE
+    (
+      islem = 'SATIS'
+      OR
+      islem = 'SATIŞ'
+    )
+
+    AND teslim_durumu = 'TESLİM EDİLMEDİ'
+
+  ''');
+
+    return Sqflite.firstIntValue(result) ?? 0;
+  }
+
 // DatabaseHelper.dart içinde veritabanını açtığın yere (onOpen veya onUpgrade) ekleyebilirsin
   Future<void> _tabloyuGuncelle(dynamic db) async {
     // --- WEB KORUMASI ---
@@ -8415,34 +8522,153 @@ CREATE TABLE IF NOT EXISTS tarim_firmalari (
     }
   }
 
+  Future<int> bicerBakimEkle(Map<String, dynamic> row) async {
+    print("\n--- 🔧 BİÇER BAKIM KAYDI İŞLENİYOR ---");
+
+    // Gelen verileri klonlayıp null veya eksik alanları birbirine yedekliyoruz
+    Map<String, dynamic> guvenliRow = Map.from(row);
+
+    // Eğer arayüzden 'aciklama' gönderilip 'parca_adi' boş kaldıysa veya tam tersiyse:
+    guvenliRow['parca_adi'] = row['parca_adi'] ?? row['aciklama'] ?? '';
+    guvenliRow['aciklama'] = row['aciklama'] ?? row['parca_adi'] ?? '';
+    guvenliRow['sezon'] = row['sezon'] ?? DateTime.now().year.toString();
+    guvenliRow['tutar'] = double.tryParse(row['tutar'].toString()) ?? 0.0;
+
+    // --- WEB UYUMLULUĞU (FIREBASE) ---
+    if (kIsWeb) {
+      try {
+        print("🌐 Web: Bakım bilgisi buluta yazılıyor...");
+        String docId = guvenliRow['id']?.toString() ?? DateTime.now().millisecondsSinceEpoch.toString();
+        await FirebaseFirestore.instance
+            .collection('bicer_bakimlari')
+            .doc(docId)
+            .set({
+          ...guvenliRow,
+          'son_guncelleme': FieldValue.serverTimestamp(),
+        });
+        return 1;
+      } catch (e) {
+        print("❌ Web Bakım Ekleme Hatası: $e");
+        return -1;
+      }
+    }
+
+    // --- MOBİL UYUMLULUĞU (SQLite) ---
+    try {
+      Database db = await instance.database;
+      int id = await db.insert(
+          'bicer_bakimlari',
+          guvenliRow, // Güvenli ve sütunları tam haritayı veriyoruz
+          conflictAlgorithm: ConflictAlgorithm.replace
+      );
+      print("🚀 Mobil: Bakım kaydı yerel veritabanına işlendi (ID: $id)");
+
+      // Arka planda Firebase yedeklemesi
+      FirebaseFirestore.instance
+          .collection('bicer_bakimlari')
+          .doc(id.toString())
+          .set({
+        ...guvenliRow,
+        'is_synced': 1,
+        'yerel_id': id,
+      }).catchError((e) => print("⚠️ Firebase Bakım Yedekleme Aksadı: $e"));
+
+      return id;
+    } catch (e) {
+      print("❌ Mobil SQLite Bakım Yazma Hatası: $e");
+      return -1;
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> bicerBakimlariniGetir(String bicerId) async {
+    print("\n--- 🔧 MAKİNEYE AİT BAKIMLAR SORGULANIYOR (Bicer ID: $bicerId) ---");
+
+    // --- WEB İÇİN: DOĞRUDAN FIREBASE SORGUSU ---
+    if (kIsWeb) {
+      try {
+        print("🌐 Web: Bakım listesi buluttan çekiliyor...");
+        final snapshot = await FirebaseFirestore.instance
+            .collection('bicer_bakimlari')
+            .where('bicer_id', isEqualTo: bicerId)
+            .get();
+
+        var liste = snapshot.docs.map((doc) => {
+          'id': doc.id,
+          ...doc.data(),
+        }).toList();
+
+        // Tarihe göre sıralama (En yeni en üstte)
+        liste.sort((a, b) => (b['tarih'] ?? "").toString().compareTo((a['tarih'] ?? "").toString()));
+        return liste;
+      } catch (e) {
+        print("❌ Web Bakım Listesi Hatası: $e");
+        return [];
+      }
+    }
+
+    // --- MOBİL İÇİN: SQLite SORGUSU ---
+    try {
+      final db = await instance.database;
+      final res = await db.query(
+          'bicer_bakimlari', // Konsoldaki 'no such table' hatasını önleyen doğru tablo adı
+          where: 'bicer_id = ?',
+          whereArgs: [bicerId],
+          orderBy: "id DESC"
+      );
+      return res;
+    } catch (e) {
+      print("❌ Mobil SQLite Bakım Listesi Hatası: $e");
+      return [];
+    }
+  }
+
+
+
+  Future<int> bicerBakimGuncelle(dynamic id, Map<String, dynamic> row) async {
+    print("\n--- 🔧 BAKIM KAYDI GÜNCELLENİYOR (ID: $id) ---");
+
+    if (kIsWeb) {
+      try {
+        await FirebaseFirestore.instance.collection('bicer_bakimlar').doc(id.toString()).update(row);
+        print("✅ Web: Bakım bulutta güncellendi.");
+        return 1;
+      } catch (e) {
+        print("❌ Web Güncelleme Hatası: $e");
+        return 0;
+      }
+    }
+
+    try {
+      final db = await instance.database;
+      int res = await db.update('bicer_bakimlar', row, where: 'id = ?', whereArgs: [id]);
+
+      // Firebase Senkronu
+      await FirebaseFirestore.instance.collection('bicer_bakimlar').doc(id.toString()).update(row);
+      print("🚀 Mobil: Yerel ve Bulut güncellendi.");
+      return res;
+    } catch (e) {
+      print("❌ Mobil Güncelleme Hatası: $e");
+      return 0;
+    }
+  }
+
+  // MAVUT KODUNUZDAKİ bicerSil FONKSİYONUNU BU ŞEKİLDE GÜNCELLEYİN:
   Future<int> bicerSil(dynamic id) async {
     print("\n--- 🚜 BİÇERDÖVER VE BAĞLI KAYITLAR SİLİNİYOR (ID: $id) ---");
 
-    // --- WEB İÇİN: FIREBASE ZİNCİRLEME SİLME ---
     if (kIsWeb) {
       try {
         print("🌐 Web: Makine ve bağlı tüm kayıtlar buluttan temizleniyor...");
 
-        // 1. Bağlı bakımları sil
+        // 1. Bağlı bakımları sil (Doğru tablo adı: bicer_bakimlari, Doğru sütun: bicer_id)
         var bakimlar = await FirebaseFirestore.instance
-            .collection('bicer_bakimlar')
-            .where('makine_id', isEqualTo: id)
+            .collection('bicer_bakimlari')
+            .where('bicer_id', isEqualTo: id.toString())
             .get();
         for (var doc in bakimlar.docs) { await doc.reference.delete(); }
 
-        // 2. Bağlı masrafları sil
-        var masraflar = await FirebaseFirestore.instance
-            .collection('masraflar')
-            .where('makine_id', isEqualTo: id)
-            .get();
-        for (var doc in masraflar.docs) { await doc.reference.delete(); }
-
-        // 3. Ana makine kaydını sil
-        await FirebaseFirestore.instance
-            .collection('bicerler')
-            .doc(id.toString())
-            .delete();
-
+        // 2. Ana makine kaydını sil
+        await FirebaseFirestore.instance.collection('bicerler').doc(id.toString()).delete();
         print("✅ Web: Temizlik tamamlandı.");
         return 1;
       } catch (e) {
@@ -8451,41 +8677,60 @@ CREATE TABLE IF NOT EXISTS tarim_firmalari (
       }
     }
 
-    // --- MOBİL İÇİN: SQLite TEMİZLİĞİ ---
     try {
       final db = await instance.database;
+      // Yerelde de doğru tablo ve sütunu siliyoruz
+      await db.delete('bicer_bakimlari', where: 'bicer_id = ?', whereArgs: [id]);
 
-      // 1. ADIM: Bağlı verileri temizle
-      try {
-        await db.delete('bicer_bakimlar', where: 'makine_id = ?', whereArgs: [id]);
-      } catch (e) {
-        debugPrint("⚠️ bicer_bakimlar atlandı.");
-      }
+      int res = await db.delete('bicerler', where: 'id = ?', whereArgs: [id]);
 
-      try {
-        await db.delete('masraflar', where: 'makine_id = ?', whereArgs: [id]);
-      } catch (e) {
-        debugPrint("⚠️ masraflar atlandı.");
-      }
-
-      // 2. ADIM: Makineyi ana tablodan sil
-      int res = await db.delete(
-        'bicerler',
-        where: 'id = ?',
-        whereArgs: [id],
-      );
-
-      // 3. ADIM: Firebase'den de silmeyi dene (Opsiyonel Senkron)
       FirebaseFirestore.instance
           .collection('bicerler')
           .doc(id.toString())
           .delete()
           .catchError((e) => print("Bulut silme ertelendi: $e"));
 
-      print("🚀 Mobil: Makine ve bağlı kayıtlar yerelden silindi.");
       return res;
     } catch (e) {
       print("❌ Mobil Silme Hatası: $e");
+      return 0;
+    }
+  }
+
+// MEVCUT KODUNUZDAKİ bicerBakimSil FONKSİYONUNU BU ŞEKİLDE GÜNCELLEYİN:
+  Future<int> bicerBakimSil(dynamic id) async {
+    print("\n--- 🔧 BİÇER BAKIM KAYDI SİLİNİYOR (ID: $id) ---");
+
+    if (kIsWeb) {
+      try {
+        await FirebaseFirestore.instance
+            .collection('bicer_bakimlari') // Koleksiyon ismi eşitlendi
+            .doc(id.toString())
+            .delete();
+        return 1;
+      } catch (e) {
+        print("❌ Web Bakım Silme Hatası: $e");
+        return 0;
+      }
+    }
+
+    try {
+      final db = await instance.database;
+      int result = await db.delete(
+          'bicer_bakimlari', // Tablo ismi eşitlendi
+          where: 'id = ?',
+          whereArgs: [id]
+      );
+
+      await FirebaseFirestore.instance
+          .collection('bicer_bakimlari')
+          .doc(id.toString())
+          .delete()
+          .catchError((e) => print("Bulut silme hatası: $e"));
+
+      return result;
+    } catch (e) {
+      print("❌ Mobil Bakım Silme Hatası: $e");
       return 0;
     }
   }
@@ -8648,56 +8893,7 @@ CREATE TABLE IF NOT EXISTS tarim_firmalari (
     }
   }
 
-  Future<int> bicerBakimSil(dynamic id) async {
-    print("\n--- 🔧 BİÇER BAKIM KAYDI SİLİNİYOR (ID: $id) ---");
 
-    // --- WEB İÇİN: DOĞRUDAN FIREBASE SİLME ---
-    if (kIsWeb) {
-      try {
-        print("🌐 Web: Bakım kaydı buluttan siliniyor...");
-        await FirebaseFirestore.instance
-            .collection('bicer_bakimlar')
-            .doc(id.toString())
-            .delete();
-
-        print("✅ Web: Silme işlemi başarıyla tamamlandı.");
-        return 1;
-      } catch (e) {
-        print("❌ Web Bakım Silme Hatası: $e");
-        return 0;
-      }
-    }
-
-    // --- MOBİL İÇİN: SQLite + FIREBASE SENKRONU ---
-    try {
-      final db = await instance.database;
-
-      // 1. Yerel SQLite'dan sil
-      int result = await db.delete(
-          'bicer_bakimlar',
-          where: 'id = ?',
-          whereArgs: [id]
-      );
-      print("🚀 Mobil: Yerel kayıt silindi.");
-
-      // 2. Firestore'dan sil (await kullanarak işlemin bittiğinden emin oluyoruz)
-      try {
-        await FirebaseFirestore.instance
-            .collection('bicer_bakimlar')
-            .doc(id.toString())
-            .delete();
-        print("✅ Mobil: Bulut senkronu tamamlandı.");
-      } catch (fbError) {
-        // İnternet yoksa bile yerelden silindiği için kullanıcıya hata hissettirmeyiz
-        print("⚠️ Mobil: Bulut silme başarısız (İnternet?), yerel işlem tamam: $fbError");
-      }
-
-      return result;
-    } catch (e) {
-      print("❌ Mobil Bakım Silme Genel Hatası: $e");
-      return 0;
-    }
-  }
   Future<List<Map<String, dynamic>>> makineleriGetir() async {
     print("\n--- 🚜 MAKİNE PARKURU VE MASRAF ANALİZİ BAŞLATILDI ---");
 
@@ -8759,6 +8955,10 @@ CREATE TABLE IF NOT EXISTS tarim_firmalari (
       return [];
     }
   }
+
+
+
+
   Future<void> tumMusteriKayitlariniTemizle(String ciftciAd) async {
     print("\n--- 🧹 MÜŞTERİ ARŞİVİ TEMİZLENİYOR (Ad: $ciftciAd) ---");
 
@@ -9372,188 +9572,99 @@ CREATE TABLE IF NOT EXISTS tarim_firmalari (
     }
   }
 
-  // Bakım Ekle: Parça veya servis kaydını yedekler.
-  Future<dynamic> bicerBakimEkle(Map<String, dynamic> veri) async {
-    print("\n--- 🔧 YENİ BAKIM/SERVİS KAYDI İŞLENİYOR ---");
 
-    // --- WEB İÇİN: DOĞRUDAN FIREBASE KAYDI ---
-    if (kIsWeb) {
-      try {
-        print("🌐 Web: Bakım verileri buluta gönderiliyor...");
-
-        // Firebase'de döküman oluştur
-        var ref = await FirebaseFirestore.instance.collection('bicer_bakimlar').add({
-          ...veri,
-          'kayit_tarihi': FieldValue.serverTimestamp(),
-        });
-
-        print("✅ Web: Bakım kaydı bulutta oluşturuldu (ID: ${ref.id})");
-        return ref.id;
-      } catch (e) {
-        print("❌ Web Bakım Kayıt Hatası: $e");
-        return 0;
-      }
-    }
-
-    // --- MOBİL İÇİN: SQLite + FIREBASE SENKRONU ---
-    try {
-      final db = await instance.database;
-
-      // 1. Yerel SQLite Kaydı
-      // Sanayide internet çekmese bile kayıt anında cepte.
-      int id = await db.insert('bicer_bakimlar', veri);
-      print("🚀 Mobil: Bakım kaydı yerel deftere işlendi (ID: $id)");
-
-      // 2. Firebase Yedekleme
-      try {
-        await FirebaseFirestore.instance.collection('bicer_bakimlar').doc(id.toString()).set({
-          ...veri,
-          'id': id, // SQLite ID'sini Firebase'de de tutalım ki eşleşsin
-          'kayit_tarihi': FieldValue.serverTimestamp(),
-        });
-        print("✅ Mobil: Bakım kaydı buluta başarıyla yedeklendi.");
-      } catch (fbError) {
-        print("⚠️ Mobil: Firebase yedekleme aksadı (İnternet?), yerel kayıt tamam: $fbError");
-      }
-
-      return id;
-    } catch (e) {
-      print("❌ Mobil Bakım Kayıt Genel Hatası: $e");
-      return 0;
-    }
-  }
-
-// Bakımları Getir: Belirli bir biçerin tüm servis geçmişini listeler.
-  Future<List<Map<String, dynamic>>> bicerBakimlariGetir(dynamic bicerId) async {
-    print("\n--- 🛠️ MAKİNE BAKIM GEÇMİŞİ SORGULANIYOR (ID: $bicerId) ---");
-
-    // --- WEB İÇİN: DOĞRUDAN FIREBASE SORGUSU ---
-    if (kIsWeb) {
-      try {
-        print("🌐 Web: Bakım kayıtları buluttan çekiliyor...");
-        final snapshot = await FirebaseFirestore.instance
-            .collection('bicer_bakimlar')
-            .where('bicer_id', isEqualTo: bicerId)
-            .get();
-
-        if (snapshot.docs.isNotEmpty) {
-          var liste = snapshot.docs.map((doc) => {
-            'id_firebase': doc.id,
-            ...doc.data(),
-          }).toList();
-
-          // En son yapılan bakım en üstte görünsün (Tarihe göre sıralama)
-          // Eğer Firebase'de 'kayit_tarihi' varsa ona göre, yoksa ID'ye göre süzüyoruz
-          liste.sort((a, b) => (b['kayit_tarihi']?.toString() ?? "")
-              .compareTo(a['kayit_tarihi']?.toString() ?? ""));
-
-          print("✅ Web: Bulutta ${liste.length} bakım kaydı bulundu.");
-          return liste;
-        }
-      } catch (e) {
-        print("❌ Web Bakım Liste Hatası: $e");
-      }
-      return [];
-    }
-
-    // --- MOBİL İÇİN: ÖNCE FIREBASE, SONRA SQLite ---
-    try {
-      print("📱 Mobil: Güncel bakım geçmişi için Firebase kontrol ediliyor...");
-      final snapshot = await FirebaseFirestore.instance
-          .collection('bicer_bakimlar')
-          .where('bicer_id', isEqualTo: bicerId)
-          .get();
-
-      if (snapshot.docs.isNotEmpty) {
-        print("✅ Mobil: Bakım geçmişi buluttan tazelendi.");
-        return snapshot.docs.map((doc) => doc.data()).toList();
-      }
-    } catch (e) {
-      print("⚠️ Mobil: Firebase'e ulaşılamadı (İnternet?), yerel hafızaya bakılıyor.");
-    }
-
-    // Firebase boşsa veya hata verdiyse yerel SQLite'a bak
-    try {
-      final db = await instance.database;
-      final res = await db.query(
-          'bicer_bakimlar',
-          where: 'bicer_id = ?',
-          whereArgs: [bicerId],
-          orderBy: "id DESC" // Yerelde ID (veya tarih) üzerinden en yeni üstte
-      );
-
-      print("🚀 Mobil: Yerel veritabanından ${res.length} bakım kaydı getirildi.");
-      return res;
-    } catch (e) {
-      print("❌ Mobil SQLite Bakım Liste Hatası: $e");
-      return [];
-    }
-  }
-
-  Future<int> bicerBakimGuncelle(dynamic id, Map<String, dynamic> row) async {
-    print("\n--- 🔧 BAKIM KAYDI GÜNCELLENİYOR (ID: $id) ---");
-
-    if (kIsWeb) {
-      try {
-        await FirebaseFirestore.instance.collection('bicer_bakimlar').doc(id.toString()).update(row);
-        print("✅ Web: Bakım bulutta güncellendi.");
-        return 1;
-      } catch (e) {
-        print("❌ Web Güncelleme Hatası: $e");
-        return 0;
-      }
-    }
-
-    try {
-      final db = await instance.database;
-      int res = await db.update('bicer_bakimlar', row, where: 'id = ?', whereArgs: [id]);
-
-      // Firebase Senkronu
-      await FirebaseFirestore.instance.collection('bicer_bakimlar').doc(id.toString()).update(row);
-      print("🚀 Mobil: Yerel ve Bulut güncellendi.");
-      return res;
-    } catch (e) {
-      print("❌ Mobil Güncelleme Hatası: $e");
-      return 0;
-    }
-  }
 
   Future<dynamic> hasatEkle(Map<String, dynamic> veri) async {
+
     print("\n--- 🌾 YENİ HASAT KAYDI İŞLENİYOR ---");
 
+    // =========================================================
+    // WEB
+    // =========================================================
     if (kIsWeb) {
+
       try {
-        var ref = FirebaseFirestore.instance.collection('tarla_hasatlari').doc();
-        Map<String, dynamic> fbVeri = Map.from(veri);
+
+        // Firebase benzersiz ID üretir
+        var ref = FirebaseFirestore.instance
+            .collection('tarla_hasatlari')
+            .doc();
+
+        Map<String, dynamic> fbVeri = Map<String, dynamic>.from(veri);
+
+        fbVeri['firebase_id'] = ref.id;
         fbVeri['sql_id'] = ref.id;
+        fbVeri['is_synced'] = 1;
         fbVeri['olusturma_tarihi'] = FieldValue.serverTimestamp();
 
         await ref.set(fbVeri);
-        print("✅ Web: Hasat buluta eklendi (ID: ${ref.id})");
+
+        print("✅ Web: Hasat buluta eklendi => ${ref.id}");
+
         return ref.id;
+
       } catch (e) {
+
         print("❌ Web Hasat Hatası: $e");
+
         return 0;
       }
     }
 
+    // =========================================================
+    // MOBİL
+    // =========================================================
+
     final db = await instance.database;
-    int id = await db.insert('tarla_hasatlari', veri);
+
+    // Önce yerele kaydet
+    int localId = await db.insert(
+      'tarla_hasatlari',
+      {
+        ...veri,
+        'is_synced': 0,
+      },
+    );
 
     try {
-      Map<String, dynamic> firebaseVeri = Map.from(veri);
-      firebaseVeri['sql_id'] = id;
+
+      // Firebase benzersiz ID oluştur
+      var ref = FirebaseFirestore.instance
+          .collection('tarla_hasatlari')
+          .doc();
+
+      Map<String, dynamic> firebaseVeri =
+      Map<String, dynamic>.from(veri);
+
+      firebaseVeri['firebase_id'] = ref.id;
+      firebaseVeri['sql_id'] = localId;
       firebaseVeri['is_synced'] = 1;
-      firebaseVeri['olusturma_tarihi'] = FieldValue.serverTimestamp();
+      firebaseVeri['olusturma_tarihi'] =
+          FieldValue.serverTimestamp();
 
-      await FirebaseFirestore.instance.collection('tarla_hasatlari').doc(id.toString()).set(firebaseVeri);
+      // Firebase'e TEK kayıt gönder
+      await ref.set(firebaseVeri);
 
-      await db.update('tarla_hasatlari', {'is_synced': 1, 'firebase_id': id.toString()}, where: 'id = ?', whereArgs: [id]);
-      print("🚀 Mobil: Hasat yerel ve bulut kaydı tamam.");
+      // Yerelde firebase_id mühürle
+      await db.update(
+        'tarla_hasatlari',
+        {
+          'firebase_id': ref.id,
+          'is_synced': 1,
+        },
+        where: 'id = ?',
+        whereArgs: [localId],
+      );
+
+      print("🚀 Mobil: Hasat yerel + bulut başarıyla kaydedildi.");
+      print("🔥 Firebase ID => ${ref.id}");
+
     } catch (e) {
+
       print("⚠️ Firebase sync hatası: $e");
     }
-    return id;
+
+    return localId;
   }
 
   Future<dynamic> tarlaEkle(Map<String, dynamic> veri) async {
@@ -11072,18 +11183,28 @@ CREATE TABLE IF NOT EXISTS tarim_firmalari (
   }
 
 
-  // --- PERSONEL EKLE ---
+// --- PERSONEL EKLE ---
   Future<void> personelEkle(Map<String, dynamic> veri) async {
+    // SQLite ve Firestore alan adlarını birbirine bağlıyoruz
+    final firestoreVeri = Map<String, dynamic>.from(veri);
+    // Bulutta büyük harfli 'İD' kullandığınız için dönüştürüyoruz
+    if (firestoreVeri.containsKey('id')) {
+      firestoreVeri['İD'] = firestoreVeri['id'];
+    }
+
     if (kIsWeb) {
-      await FirebaseFirestore.instance.collection('personel').doc(veri['id']).set(veri);
+      await FirebaseFirestore.instance.collection('personel').doc(veri['id'].toString()).set(firestoreVeri);
       return;
     }
+
     final db = await instance.database;
     await db.insert('personel', veri);
     try {
-      await FirebaseFirestore.instance.collection('personel').doc(veri['id']).set(veri);
+      await FirebaseFirestore.instance.collection('personel').doc(veri['id'].toString()).set(firestoreVeri);
       await db.update('personel', {'is_synced': 1}, where: 'id = ?', whereArgs: [veri['id']]);
-    } catch (e) { print("☁️ Firebase Hatası: $e"); }
+    } catch (e) {
+      print("☁️ Firebase Hatası: $e");
+    }
   }
 
 // --- PERSONEL SİL (TAM TEMİZLİK) ---
@@ -11097,16 +11218,32 @@ CREATE TABLE IF NOT EXISTS tarim_firmalari (
     int sonuc = await db.delete('personel', where: 'id = ?', whereArgs: [id]);
     try {
       await FirebaseFirestore.instance.collection('personel').doc(id).delete();
-    } catch (e) { print("☁️ Firebase Silme Hatası: $e"); }
+    } catch (e) {
+      print("☁️ Firebase Silme Hatası: $e");
+    }
     return sonuc;
   }
+
+// --- PERSONEL HAREKETİ EKLE ---
   Future<void> personelHareketEkle(Map<String, dynamic> hareket) async {
     print("\n--- 💸 PERSONEL HAREKETİ İŞLENİYOR ---");
 
+    // Firestore'un beklediği Türkçe/Özel alan isimlerine dönüştürme yapıyoruz
+    final firestoreHareket = {
+      'İD': hareket['id'],
+      'personel_kimliği': hareket['personel_id'],
+      'tarih': hareket['tarih'],
+      'tur': hareket['tur'],
+      'tutar': hareket['tutar'],
+      'ay_bilgisi': hareket['ay_bilgisi'] ?? "MAYIS",
+      'açıklama': hareket['aciklama'] ?? hareket['not_aciklama'] ?? "AÇIKLAMA YOK",
+      'senkronize_ediliyor': 0
+    };
+
     if (kIsWeb) {
       WriteBatch batch = FirebaseFirestore.instance.batch();
-      batch.set(FirebaseFirestore.instance.collection('personel_hareketleri').doc(hareket['id']), hareket);
-      batch.update(FirebaseFirestore.instance.collection('personel').doc(hareket['personel_id']), {
+      batch.set(FirebaseFirestore.instance.collection('personel_hareketleri').doc(hareket['id'].toString()), firestoreHareket);
+      batch.update(FirebaseFirestore.instance.collection('personel').doc(hareket['personel_id'].toString()), {
         'bakiye': FieldValue.increment(hareket['tutar']),
       });
       await batch.commit();
@@ -11118,12 +11255,15 @@ CREATE TABLE IF NOT EXISTS tarim_firmalari (
     await db.rawUpdate('UPDATE personel SET bakiye = bakiye + ? WHERE id = ?', [hareket['tutar'], hareket['personel_id']]);
 
     try {
-      await FirebaseFirestore.instance.collection('personel_hareketleri').doc(hareket['id']).set(hareket);
-      await FirebaseFirestore.instance.collection('personel').doc(hareket['personel_id']).update({
+      await FirebaseFirestore.instance.collection('personel_hareketleri').doc(hareket['id'].toString()).set(firestoreHareket);
+      await FirebaseFirestore.instance.collection('personel').doc(hareket['personel_id'].toString()).update({
         'bakiye': FieldValue.increment(hareket['tutar']),
       });
-    } catch (e) { print("⚠️ Bulut senkronu internet gelince hallolacak."); }
+    } catch (e) {
+      print("⚠️ Bulut senkronu internet gelince hallolacak. Hata: $e");
+    }
   }
+
 // --- PERSONEL LİSTESİ (WEB & MOBİL UYUMLU) ---
   Future<List<Map<String, dynamic>>> personelListesiGetir() async {
     if (kIsWeb) {
@@ -11131,7 +11271,8 @@ CREATE TABLE IF NOT EXISTS tarim_firmalari (
         final snapshot = await FirebaseFirestore.instance.collection('personel').get();
         return snapshot.docs.map((doc) {
           Map<String, dynamic> data = doc.data();
-          data['id'] = doc.id;
+          // Buluttan gelen büyük 'İD' değerini uygulamanın anlayacağı küçük 'id'ye bağlıyoruz
+          data['id'] = data['İD'] ?? data['id'] ?? doc.id;
           return data;
         }).toList();
       } catch (e) {
@@ -11144,30 +11285,47 @@ CREATE TABLE IF NOT EXISTS tarim_firmalari (
     }
   }
 
-  // --- PERSONEL GÜNCELLEME ---
+// --- PERSONEL GÜNCELLEME ---
   Future<void> personelGuncelle(String id, Map<String, dynamic> v) async {
+    final firestoreGuncelleme = Map<String, dynamic>.from(v);
+    if (firestoreGuncelleme.containsKey('id')) {
+      firestoreGuncelleme['İD'] = firestoreGuncelleme['id'];
+    }
+
     if (!kIsWeb) {
       final db = await instance.database;
       await db.update('personel', v, where: 'id = ?', whereArgs: [id]);
     }
     try {
-      await FirebaseFirestore.instance.collection('personel').doc(id).update(v);
+      await FirebaseFirestore.instance.collection('personel').doc(id.toString()).update(firestoreGuncelleme);
       print("✅ Personel hem yerelde hem bulutta güncellendi.");
     } catch (e) {
       print("⚠️ Personel bulut güncelleme hatası: $e");
     }
   }
 
-  // --- PERSONEL HAREKETLERİNİ GETİR ---
+// --- PERSONEL HAREKETLERİNİ GETİR ---
   Future<List<Map<String, dynamic>>> personelHareketleriGetir(String personelId) async {
     if (kIsWeb) {
       try {
+        // 🔥 'personel_id' yerine buluttaki 'personel_kimliği' alanı ile sorgu atıyoruz
         final snapshot = await FirebaseFirestore.instance
             .collection('personel_hareketleri')
-            .where('personel_id', isEqualTo: personelId)
-            .orderBy('tarih', descending: true)
+            .where('personel_kimliği', isEqualTo: personelId)
             .get();
-        return snapshot.docs.map((doc) => doc.data()).toList();
+
+        final liste = snapshot.docs.map((doc) {
+          Map<String, dynamic> data = doc.data();
+          // UI kodunun patlamaması için buluttaki Türkçe alanları normale çevirip veriyoruz
+          data['id'] = data['İD'] ?? doc.id;
+          data['personel_id'] = data['personel_kimliği'];
+          data['aciklama'] = data['açıklama'];
+          return data;
+        }).toList();
+
+        // Firestore index hatası vermemesi için sıralamayı yerelde yapıyoruz
+        liste.sort((a, b) => b['tarih'].toString().compareTo(a['tarih'].toString()));
+        return liste;
       } catch (e) {
         print("Web personel hareket hatası: $e");
         return [];

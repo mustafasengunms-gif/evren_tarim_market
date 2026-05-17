@@ -104,85 +104,176 @@ class _CiftcilikPaneliState extends State<CiftcilikPaneli> {
   Future<void> _verileriYukle() async {
     try {
       debugPrint("🔄 Veriler yükleniyor...");
-
-      final tarlalar = await DatabaseHelper.instance.tarlaListesiGetir();
-      final yerelHareketler =
-      await DatabaseHelper.instance.tumTarlaHareketleriniGetir();
-      final db = await DatabaseHelper.instance.database;
-
-      final yerelHasatlar =
-      await DatabaseHelper.instance.tumHasatlariGetir();
-
-      final fbHasatSnap = await FirebaseFirestore.instance
-          .collection('tarla_hasatlari')
-          .get();
-
-      // ✅ SADECE firebase_id üzerinden kontrol
-      Set<String> yerelFirebaseIds = yerelHasatlar
-          .map((h) => h['firebase_id']?.toString() ?? "")
-          .where((e) => e.isNotEmpty)
-          .toSet();
-
-      for (var doc in fbHasatSnap.docs) {
-        String fId = doc.id;
-
-        // ❗ Eğer zaten varsa ASLA ekleme
-        if (yerelFirebaseIds.contains(fId)) continue;
-
-        Map<String, dynamic> veri = doc.data();
-
-        veri['firebase_id'] = fId;
-        veri['is_synced'] = 1;
-
-        // SQLite id çakışmasın
-        veri.remove('id');
-
-        await db.insert('tarla_hasatlari', veri);
-
-        debugPrint("📥 Yeni kayıt eklendi: $fId");
-      }
-
-      final guncelHasatListesi =
-      await DatabaseHelper.instance.tumHasatlariGetir();
+      final seciliSezonNorm = _seciliSezon.toString().trim();
 
       double hesaplananGider = 0;
       double hesaplananGelir = 0;
       double hesaplananAlan = 0;
       int gercekIslemSayisi = 0;
+      List<Map<String, dynamic>> sezonlukTarlalar = [];
 
-      final seciliSezonNorm = _seciliSezon.toString().trim();
+      // 🌐 1. YOL: EĞER WEB PLATFORMUNDAYSAN (SADECE FIREBASE)
+      if (kIsWeb) {
+        debugPrint("🌐 Web Modu: Veriler doğrudan Firebase üzerinden çekiliyor...");
 
-      final sezonlukTarlalar = tarlalar.where((t) {
-        return t['sezon'].toString().trim() == seciliSezonNorm;
-      }).toList();
+        // Tarlaları Firebase'den çek (Eğer tarlalar koleksiyonun varsa)
+        final fbTarlalar = await _firestore
+            .collection('tarlalar')
+            .where('sezon', isEqualTo: seciliSezonNorm)
+            .get();
 
-      for (var t in sezonlukTarlalar) {
-        final tId = t['id'].toString().trim();
+        // Tarla hareketlerini (giderleri) Firebase'den çek
+        final fbHareketler = await _firestore
+            .collection('tarla_hareketleri')
+            .where('sezon', isEqualTo: seciliSezonNorm)
+            .get();
 
-        hesaplananAlan += toDoubleSafe(t['dekar']);
+        // Hasat gelirlerini Firebase'den çek
+        final fbHasatlar = await _firestore
+            .collection('tarla_hasatlari')
+            .where('sezon', isEqualTo: seciliSezonNorm)
+            .get();
 
-        if (t['is_icar'] == 1) {
-          hesaplananGider += toDoubleSafe(t['kira_tutari']);
+        // Web için Tarlaları listeye haritala
+        sezonlukTarlalar = fbTarlalar.docs.map((doc) {
+          var d = doc.data();
+          return {
+            'id': doc.id,
+            'mevki': normalize(d['mevki']),
+            'ekilen_urun': normalize(d['ekilen_urun']),
+            'dekar': toDoubleSafe(d['dekar']),
+            'is_icar': int.tryParse(d['is_icar']?.toString() ?? "0") ?? 0,
+            'kira_tutari': toDoubleSafe(d['kira_tutari']),
+            'sezon': normalize(d['sezon']),
+          };
+        }).toList();
+
+        // Web Alan ve İcar Gider Hesaplaması
+        for (var t in sezonlukTarlalar) {
+          hesaplananAlan += toDoubleSafe(t['dekar']);
+          if (t['is_icar'] == 1) {
+            hesaplananGider += toDoubleSafe(t['kira_tutari']);
+          }
         }
 
-        final tGiderleri = yerelHareketler.where((m) =>
-        m['tarla_id'].toString() == tId &&
-            m['sezon'].toString() == seciliSezonNorm);
-
-        for (var m in tGiderleri) {
-          hesaplananGider += toDoubleSafe(m['tutar']);
+        // Web Tarla Hareketleri (Masraflar) Hesaplaması
+        for (var doc in fbHareketler.docs) {
+          var d = doc.data();
+          hesaplananGider += toDoubleSafe(d['toplam'] ?? d['tutar'] ?? d['birimFiyat']);
           gercekIslemSayisi++;
         }
 
-        final tHasatlari = guncelHasatListesi.where((h) =>
-        h['tarla_id'].toString().trim() == tId &&
-            h['sezon'].toString().trim() == seciliSezonNorm);
+        // Web Hasat Gelirleri Hesaplaması
+        for (var doc in fbHasatlar.docs) {
+          var d = doc.data();
+          hesaplananGelir += toDoubleSafe(d['toplam_gelir'] ?? d['gelir']);
+        }
 
-        for (var h in tHasatlari) {
-          hesaplananGelir += toDoubleSafe(h['toplam_gelir']);
+      }
+      // 📱 2. YOL: EĞER MOBİLDEYSEN (SQLITE + FIREBASE SENKRONİZASYON)
+      else {
+        debugPrint("📱 Mobil Modu: SQLite ve Firebase eşitlemesi çalışıyor...");
+
+        final tarlalar = await DatabaseHelper.instance.tarlaListesiGetir();
+        final yerelHareketler = await DatabaseHelper.instance.tumTarlaHareketleriniGetir();
+        final db = await DatabaseHelper.instance.database;
+
+        // 1. Güncel yerel hasat listesini çekelim
+        final yerelHasatlar = await DatabaseHelper.instance.tumHasatlariGetir();
+
+        // Yerelde kayıtlı olan tüm firebase_id'leri hızlı arama için Set'e dolduruyoruz
+        Set<String> yerelFirebaseIds = yerelHasatlar
+            .map((h) => h['firebase_id']?.toString() ?? "")
+            .where((e) => e.isNotEmpty)
+            .toSet();
+
+        // 2. Buluttan hasatları çekelim
+        final fbHasatSnap = await FirebaseFirestore.instance
+            .collection('tarla_hasatlari')
+            .get();
+
+        // Buluttan gelip yerelde OLMAYANLARI tespit edip çifte kaydı mühürlüyoruz
+        for (var doc in fbHasatSnap.docs) {
+          String fId = doc.id;
+
+          // EĞER bu firebase_id yerelde zaten varsa ASLA BİR DAHA EKLEME!
+          if (yerelFirebaseIds.contains(fId)) continue;
+
+          Map<String, dynamic> hamVeri = doc.data();
+          Map<String, dynamic> veri = {};
+
+          // Firebase'den gelen tüm alanları tek tek kontrol edip temizliyoruz
+          hamVeri.forEach((anahtar, deger) {
+            if (deger is Timestamp) {
+              veri[anahtar] = DateFormat('yyyy-MM-dd').format(deger.toDate());
+            } else {
+              veri[anahtar] = deger;
+            }
+          });
+
+          if (veri['tarih'] == null) {
+            veri['tarih'] = DateFormat('yyyy-MM-dd').format(DateTime.now());
+          }
+
+          // 🔥 TİP ÇAKIŞMASINI ÖNLEYEN GÜVENLİ TEMİZ VERİ MATRİSİ
+          Map<String, dynamic> temizVeri = {
+            // 'id' alanını sildik! SQLite INTEGER AUTOINCREMENT olarak kendi otomatik sayı verecek.
+            'firebase_id': fId,
+            'tarla_id': int.tryParse(veri['tarla_id']?.toString() ?? "1") ?? 1,
+            'sezon': veri['sezon']?.toString() ?? seciliSezonNorm,
+            'ekilen_urun': veri['ekilen_urun']?.toString().toUpperCase() ?? "BELİRSİZ",
+            'satilan_kisi': veri['satilan_kisi']?.toString().toUpperCase() ?? "BİLİNMİYOR",
+            'toplam_kg': toDoubleSafe(veri['toplam_kg']),
+            'toplam_gelir': toDoubleSafe(veri['toplam_gelir']),
+            'birim_fiyat': toDoubleSafe(veri['birim_fiyat']),
+            'pesin_alinan': toDoubleSafe(veri['pesin_alinan']),
+            'kalan_alacak': toDoubleSafe(veri['kalan_alacak']),
+            'tarih': veri['tarih'],
+            'odeme_durumu': veri['odeme_durumu']?.toString() ?? "BEKLEMEDE",
+            'is_synced': 1
+          };
+
+          // Artık sıfır hata ile SQLite tıkır tıkır içeri alacak abi
+          await db.insert('tarla_hasatlari', temizVeri);
+          debugPrint("📥 Buluttan yerele yeni hasat veri tipi düzeltilerek mühürlendi: $fId");
+        }
+
+        // Senkronizasyon bitti, en temiz güncel listeyi hafızaya al
+        final guncelHasatListesi = await DatabaseHelper.instance.tumHasatlariGetir();
+
+        sezonlukTarlalar = tarlalar.where((t) {
+          return t['sezon'].toString().trim() == seciliSezonNorm;
+        }).toList();
+
+        for (var t in sezonlukTarlalar) {
+          final tId = t['id'].toString().trim();
+          hesaplananAlan += toDoubleSafe(t['dekar']);
+
+          if (t['is_icar'] == 1) {
+            hesaplananGider += toDoubleSafe(t['kira_tutari']);
+          }
+
+          final tGiderleri = yerelHareketler.where((m) =>
+          m['tarla_id'].toString() == tId &&
+              m['sezon'].toString() == seciliSezonNorm);
+
+          for (var m in tGiderleri) {
+            hesaplananGider += toDoubleSafe(m['tutar']);
+            gercekIslemSayisi++;
+          }
+
+          // Filtrelemeyi en güncel mühürlü liste üzerinden yapıyoruz
+          final tHasatlari = guncelHasatListesi.where((h) =>
+          h['tarla_id'].toString().trim() == tId &&
+              h['sezon'].toString().trim() == seciliSezonNorm);
+
+          for (var h in tHasatlari) {
+            hesaplananGelir += toDoubleSafe(h['toplam_gelir']);
+          }
         }
       }
 
+      // 🎯 SONUÇLARI EKRANA YANSITMA (Hem Web Hem Mobil İçin Ortak)
       if (mounted) {
         setState(() {
           _tarlalar = sezonlukTarlalar;
@@ -194,7 +285,7 @@ class _CiftcilikPaneliState extends State<CiftcilikPaneli> {
         });
       }
     } catch (e) {
-      debugPrint("❌ HATA: $e");
+      debugPrint("❌ Kritik Yükleme Hatası: $e");
     }
   }
 
@@ -1177,16 +1268,25 @@ class _CiftcilikPaneliState extends State<CiftcilikPaneli> {
                     };
 
                     if (mevcutHasat == null) {
-                      var docRef = await FirebaseFirestore.instance.collection('tarla_hasatlari').add(veri);
-                      veri['firebase_id'] = docRef.id;
+
+                      // SADECE TEK YERDEN KAYIT
                       await DatabaseHelper.instance.hasatEkle(veri);
+
                     } else {
+
                       String? fId = mevcutHasat['firebase_id'];
-                      if (fId != null) {
-                        await FirebaseFirestore.instance.collection('tarla_hasatlari').doc(fId).update(veri);
+
+                      if (fId != null && fId.isNotEmpty) {
+                        await FirebaseFirestore.instance
+                            .collection('tarla_hasatlari')
+                            .doc(fId)
+                            .update(veri);
                       }
-                      await DatabaseHelper.instance.hasatGuncelle(mevcutHasat['id'], veri);
+
+                      await DatabaseHelper.instance
+                          .hasatGuncelle(mevcutHasat['id'], veri);
                     }
+
                     Navigator.pop(c);
                     _verileriYukle();
                   }

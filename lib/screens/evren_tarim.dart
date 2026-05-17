@@ -22,6 +22,7 @@ import 'package:evren_tarim_market/db/database_helper.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/foundation.dart'; // En üstte kIsWeb kontrolü için bu import olmalı
 
 
 class EvrenTarimPaneli extends StatefulWidget {
@@ -65,10 +66,22 @@ class _EvrenTarimPaneliState extends State<EvrenTarimPaneli> {
     super.dispose();
   }
 
-  Future<void> _verileriSqlDenGetir() async {
-    final db = await DatabaseHelper.instance.database;
 
+// Firebase Firestore kullanıyorsan onun importu da olmalı:
+// import 'package:cloud_firestore/cloud_firestore.dart';
+
+  Future<void> _verileriSqlDenGetir() async {
+    // 🌐 1. WEB KONTROLÜ: Eğer uygulama Web'de çalışıyorsa local SQLite'a hiç dokunma!
+    if (kIsWeb) {
+      debugPrint("🌐 Web platformu algılandı, özet veriler Firebase Firestore'dan getiriliyor...");
+      await _verileriFirebaseDenGetir();
+      return; // Fonksiyonu burada bitir, aşağıdaki SQLite kodlarına geçme.
+    }
+
+    // 📱 2. MOBİL (Android/iOS) KODLARI: Local SQLite işlemleri aynen devam ediyor.
     try {
+      final db = await DatabaseHelper.instance.database;
+
       var satisRes = await db.rawQuery("SELECT SUM(tutar) as toplam, COUNT(*) as adet FROM musteri_hareketleri WHERE islem = 'SATIS'");
       var stokRes = await db.rawQuery("SELECT COUNT(*) as adet FROM stoklar");
       var musteriRes = await db.rawQuery("SELECT COUNT(*) as adet FROM musteriler");
@@ -84,21 +97,17 @@ class _EvrenTarimPaneliState extends State<EvrenTarimPaneli> {
       double cekToplam = double.tryParse(cekRes.first['toplam'].toString()) ?? 0.0;
       double senetToplam = double.tryParse(senetRes.first['toplam'].toString()) ?? 0.0;
 
-      // --- MÜHÜRLÜ FİRMA BORCU HESABI ---
       double fBorcu = 0.0;
       try {
-        // 1. Tablo adını 'tarim_firma_hareketleri' olarak düzelttik.
-        // 2. Alımları (+) Ödemeleri (-) toplayarak net borcu buluyoruz.
         var borcSorgu = await db.rawQuery('''
         SELECT 
           SUM(CASE WHEN tip LIKE '%ÖDEME%' OR tip LIKE '%ODEME%' OR tip LIKE '%TAHSİLAT%' THEN -tutar ELSE tutar END) as net_borc 
         FROM tarim_firma_hareketleri 
         WHERE silindi = 0
       ''');
-
         fBorcu = double.tryParse(borcSorgu.first['net_borc'].toString()) ?? 0.0;
       } catch (e) {
-        debugPrint("Firma borcu hesaplama hatası (Tablo ismi veya silindi sütunu eksik olabilir): $e");
+        debugPrint("Firma borcu hesaplama hatası: $e");
         fBorcu = 0.0;
       }
 
@@ -150,6 +159,169 @@ class _EvrenTarimPaneliState extends State<EvrenTarimPaneli> {
   }
 
 
+  Future<void> _verileriFirebaseDenGetir() async {
+    try {
+      final firestore = FirebaseFirestore.instance;
+
+      // ==========================================
+      // 1. DÖKÜMAN SAYILARI (COUNT SORGULARI)
+      // ==========================================
+      final musteriSnap = await firestore.collection('musteriler').count().get();
+      final stokSnap = await firestore.collection('stoklar').count().get();
+      final stokListesiSnap = await firestore.collection('stoklistesi').count().get();
+      final stokTanimlariSnap = await firestore.collection('stok_tanimlari').count().get();
+      final firmalarSnap = await firestore.collection('firmalar').count().get();
+      final tarimFirmalariSnap = await firestore.collection('tarim_firmalari').count().get();
+      final faturalarSnap = await firestore.collection('faturalar').count().get();
+      final musteriFaturalariSnap = await firestore.collection('musteri_faturalari').count().get();
+      final proformalarSnap = await firestore.collection('proformalar').count().get();
+      final tarlalarSnap = await firestore.collection('tarlalar').count().get();
+      final araclarSnap = await firestore.collection('araclar').count().get();
+      final isletmelerSnap = await firestore.collection('isletmeler').count().get();
+      final personelSnap = await firestore.collection('personel').count().get();
+
+      // Biçerdöver Grubu Sayıları
+      final bicerlerSnap = await firestore.collection('bicerler').count().get();
+      final bicerMusterileriSnap = await firestore.collection('bicer_musterileri').count().get();
+
+      // ==========================================
+      // 2. TOPLAM CİRO & İŞLEM ADEDİ (SATISLAR)
+      // ==========================================
+      // Not: Satışları isterseniz 'satislar' koleksiyonundan, isterseniz 'musteri_hareketleri'nden süzebilirsiniz.
+      final satislarSnap = await firestore.collection('satislar').get();
+      double toplamCiroLocal = 0.0;
+      int toplamIslemLocal = satislarSnap.docs.length;
+
+      for (var doc in satislarSnap.docs) {
+        var data = doc.data();
+        double tutar = double.tryParse(data['tutar'].toString()) ?? 0.0;
+        toplamCiroLocal += tutar;
+      }
+
+      // Alışlar Toplamı
+      final alislarSnap = await firestore.collection('alislar').get();
+      double toplamAlisLocal = 0.0;
+      for (var doc in alislarSnap.docs) {
+        double tutar = double.tryParse(doc.data()['tutar'].toString()) ?? 0.0;
+        toplamAlisLocal += tutar;
+      }
+
+      // ==========================================
+      // 3. ÇEK & SENET HESAPLAMALARI
+      // ==========================================
+      final ceklerSnap = await firestore.collection('cekler').where('durum', isEqualTo: 'beklemede').get();
+      double cekToplam = 0.0;
+      double senetToplam = 0.0;
+
+      for (var doc in ceklerSnap.docs) {
+        var data = doc.data();
+        String tip = data['tip']?.toString().toLowerCase() ?? '';
+        double tutar = double.tryParse(data['tutar'].toString()) ?? 0.0;
+
+        if (tip == 'cek' || tip == 'çek') {
+          cekToplam += tutar;
+        } else if (tip == 'senet') {
+          senetToplam += tutar;
+        }
+      }
+
+      // ==========================================
+      // 4. TARIM FİRMALARI BORÇ/ALACAK HESABI
+      // ==========================================
+      // Listenizdeki firma hareket tablolarını kontrol ediyoruz (tarim_firma_hareketleri)
+      final firmaHareketlerSnap = await firestore
+          .collection('tarim_firma_hareketleri')
+          .where('silindi', isEqualTo: 0)
+          .get();
+
+      double fBorcu = 0.0;
+      for (var doc in firmaHareketlerSnap.docs) {
+        var data = doc.data();
+        String tip = data['tip']?.toString().toUpperCase() ?? '';
+        double tutar = double.tryParse(data['tutar'].toString()) ?? 0.0;
+
+        if (tip.contains('ÖDEME') || tip.contains('ODEME') || tip.contains('TAHSİLAT')) {
+          fBorcu -= tutar;
+        } else {
+          fBorcu += tutar;
+        }
+      }
+
+      // ==========================================
+      // 5. BİÇERDÖVER (HASAT & MAZOT) HESAPLARI
+      // ==========================================
+      final bicerIsleriSnap = await firestore.collection('bicer_isleri').get();
+      double bicerToplamGelir = 0.0;
+      for (var doc in bicerIsleriSnap.docs) {
+        double tutar = double.tryParse(doc.data()['toplam_tutar'].toString()) ?? 0.0;
+        bicerToplamGelir += tutar;
+      }
+
+      final bicerMazotSnap = await firestore.collection('bicer_mazotlar').get();
+      double bicerTotalMazotLitre = 0.0;
+      for (var doc in bicerMazotSnap.docs) {
+        double litre = double.tryParse(doc.data()['litre'].toString()) ?? 0.0;
+        bicerTotalMazotLitre += litre;
+      }
+
+      // Kasa bakiye hesabı
+      final kasaSnap = await firestore.collection('kasa_hareketleri').get();
+      double kasaBakiye = 0.0;
+      for (var doc in kasaSnap.docs) {
+        var data = doc.data();
+        double tutar = double.tryParse(data['tutar'].toString()) ?? 0.0;
+        if (data['tip'] == 'GİRİŞ' || data['tip'] == 'GIRIS') {
+          kasaBakiye += tutar;
+        } else {
+          kasaBakiye -= tutar;
+        }
+      }
+
+      if (!mounted) return;
+
+      // ==========================================
+      // 6. MAP UPDATE (TÜM DEĞERLERİ STATE'E GÖMÜYORUZ)
+      // ==========================================
+      setState(() {
+        toplamCiro = toplamCiroLocal;
+        toplamIslem = toplamIslemLocal;
+
+        _guncelRaporMap = {
+          'toplam_satis': toplamCiroLocal,
+          'toplam_alis': toplamAlisLocal,
+          'islem_sayisi': toplamIslemLocal,
+          'stok_sayisi': stokSnap.count ?? 0,
+          'stok_listesi_sayisi': stokListesiSnap.count ?? 0,
+          'stok_tanimlari_sayisi': stokTanimlariSnap.count ?? 0,
+          'musteri_sayisi': musteriSnap.count ?? 0,
+          'firma_sayisi': tarimFirmalariSnap.count ?? 0,
+          'normal_firma_sayisi': firmalarSnap.count ?? 0,
+          'fatura_sayisi': faturalarSnap.count ?? 0,
+          'musteri_fatura_sayisi': musteriFaturalariSnap.count ?? 0,
+          'proforma_sayisi': proformalarSnap.count ?? 0,
+          'tarla_sayisi': tarlalarSnap.count ?? 0,
+          'arac_sayisi': araclarSnap.count ?? 0,
+          'isletme_sayisi': isletmelerSnap.count ?? 0,
+          'personel_sayisi': personelSnap.count ?? 0,
+          'firma_borcu': fBorcu,
+          'cek_toplam': cekToplam,
+          'senet_toplam': senetToplam,
+          'kasa_bakiye': kasaBakiye,
+
+          // Biçerdöver Grubu
+          'bicer_sayisi': bicerlerSnap.count ?? 0,
+          'bicer_musteri_sayisi': bicerMusterileriSnap.count ?? 0,
+          'bicer_toplam_gelir': bicerToplamGelir,
+          'bicer_toplam_mazot_litre': bicerTotalMazotLitre,
+        };
+      });
+
+      debugPrint("✅ 🌐 Web Modu: Tüm tabloların Firebase verileri başarıyla panele yüklendi!");
+
+    } catch (e) {
+      debugPrint("❌ FIREBASE TÜM TABLOLAR ÖZET VERİ ÇEKME HATASI: $e");
+    }
+  }
 
   Future<void> _tumVerileriYukle() async {
     try {

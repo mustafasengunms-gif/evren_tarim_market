@@ -168,17 +168,22 @@ class _BicerPaneliState extends State<BicerPaneli> {
       final bicerlerRaw = allBicerler.where((m) => m['yil'] == secilenSezon).toList();
       List<Map<String, dynamic>> guncelMakineler = [];
 
+      // 1. BİÇERLER DÖNGÜSÜ (Masraf Hesaplama Kısmı)
       for (var b in bicerlerRaw) {
         Map<String, dynamic> makine = Map.from(b);
-        final bakimlar = await DatabaseHelper.instance.bicerBakimlariGetir(makine['id']);
-        double mMasraf = 0;
-        for (var bakim in bakimlar) {
-          mMasraf += double.tryParse(bakim['tutar']?.toString() ?? '0') ?? 0;
-        }
-        makine['toplam_masraf'] = mMasraf;
-        bakimMasraf += mMasraf;
-        guncelMakineler.add(makine);
-      }
+
+        // 🔥 TAMİRAT: .toString() ile ID ne gelirse gelsin güvenli bir şekilde String'e çeviriyoruz
+        String guvenliBicerId = (makine['id'] ?? '').toString();
+
+    final bakimlar = await DatabaseHelper.instance.bicerBakimlariniGetir(guvenliBicerId);
+    double mMasraf = 0;
+    for (var bakim in bakimlar) {
+    mMasraf += double.tryParse(bakim['tutar']?.toString() ?? '0') ?? 0;
+    }
+    makine['toplam_masraf'] = mMasraf;
+    bakimMasraf += mMasraf;
+    guncelMakineler.add(makine);
+    }
 
       // 6. TEK SEFERDE STATE GÜNCELLEME
       if (mounted) {
@@ -341,19 +346,28 @@ class _BicerPaneliState extends State<BicerPaneli> {
         ];
       }).toList();
 
-      // Makine bakımlarını da buraya ekliyoruz...
+      // 2. MAKİNELER DÖNGÜSÜ (Tabloya/PDF'e Yazma Kısmı)
+// Makine bakımlarını da buraya ekliyoruz...
       for (var m in _makineler) {
-        final bakimlar = await DatabaseHelper.instance.bicerBakimlariGetir(m['id']);
-        for (var b in bakimlar) {
-          toplamBakimGideri += (b['tutar'] ?? 0).toDouble();
-          bakimTablosu.add([
-            "${m['marka']} ${m['model']}",
-            b['tarih']?.toString() ?? "",
-            b['parca_adi']?.toString() ?? "",
-            "${formatPara(b['tutar'])} TL"
-          ]);
-        }
-      }
+        // 🔥 TAMİRAT: Makine ID'sini String'e zorluyoruz
+        String guvenliMusteriId = (m['id'] ?? '').toString();
+
+    final bakimlar = await DatabaseHelper.instance.bicerBakimlariniGetir(guvenliMusteriId);
+    for (var b in bakimlar) {
+    // Tutar dönüşümünü sağlama alıyoruz
+    double tMiktar = double.tryParse(b['tutar']?.toString() ?? '0') ?? 0.0;
+    toplamBakimGideri += tMiktar;
+
+    bakimTablosu.add([
+    "${m['marka']} ${m['model']}",
+    b['tarih']?.toString() ?? "",
+    // 🔥 TAMİRAT: Tablo şemamızda sütun adı 'parca_adi' değil 'aciklama' idi.
+    // Null gelme ihtimaline karşı yedekli yazıyoruz:
+    b['aciklama']?.toString() ?? b['parca_adi']?.toString() ?? "",
+    "${formatPara(tMiktar)} TL"
+    ]);
+    }
+    }
     }
 
     pdf.addPage(
@@ -2887,9 +2901,10 @@ class _BicerPaneliState extends State<BicerPaneli> {
   }
 
 
-  void _makineMasrafListesiGoster(int bicerId, String ad) async {
-    // 1. Veritabanından o makinenin masraflarını çekiyoruz
-    final b = await DatabaseHelper.instance.bicerBakimlariGetir(bicerId);
+  // 3. MASRAF LİSTESİ GÖSTERME FONKSİYONU
+// 🔥 TAMİRAT: Parametreyi 'dynamic' veya 'String' yapıyoruz ki çağrılan yerde patlamasın
+  void _makineMasrafListesiGoster(dynamic bicerId, String ad) async {
+    final b = await DatabaseHelper.instance.bicerBakimlariniGetir(bicerId.toString());
 
     showDialog(context: context, builder: (c) => AlertDialog(
       title: Text("$ad Masrafları"),

@@ -7,7 +7,7 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 // Veri İşleme ve Formatlama
 import 'package:intl/intl.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-
+import '../services/firebase_foto_service.dart'; // Bu satırı ekle
 // PDF ve Yazdırma İşlemleri
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
@@ -24,6 +24,7 @@ import 'dart:convert'; // Resim dönüştürme için şart
 import 'firmahareketler.dart';
 import '../services/firebase_foto_service.dart'; // Bu satırı ekle
 import '../utils/pdf_helper.dart';
+import 'package:firebase_core/firebase_core.dart';
 
 
 class FirmaTanimSayfasi extends StatefulWidget {
@@ -1068,10 +1069,16 @@ class _FirmaTanimSayfasiState extends State<FirmaTanimSayfasi> {
     );
   }
   void _firmaSeciciDialog(String mod) {
+    // Başlığı moda göre dinamik olarak ayarlıyoruz
+    String baslik = "Firma Seçin";
+    if (mod == "EKSTRE") baslik = "Ekstre İçin Firma Seçin";
+    if (mod == "ÖDEME") baslik = "Ödeme İçin Firma Seçin";
+    if (mod == "FOTOĞRAF YÜKLE") baslik = "Fatura Fotoğrafı İçin Firma Seçin";
+
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text(mod == "EKSTRE" ? "Ekstre İçin Firma Seçin" : "Ödeme İçin Firma Seçin"),
+        title: Text(baslik),
         content: SizedBox(
           width: double.maxFinite,
           height: 400,
@@ -1080,15 +1087,25 @@ class _FirmaTanimSayfasiState extends State<FirmaTanimSayfasi> {
             itemBuilder: (context, index) {
               final f = _filtreliFirmalar[index];
               return ListTile(
-                leading: CircleAvatar(backgroundColor: Colors.indigo, child: Text(f['ad'][0], style: const TextStyle(color: Colors.white))),
+                leading: CircleAvatar(
+                    backgroundColor: Colors.indigo,
+                    child: Text(
+                        f['ad'] != null && f['ad'].isNotEmpty ? f['ad'][0] : "?",
+                        style: const TextStyle(color: Colors.white)
+                    )
+                ),
                 title: Text(f['ad'] ?? ""),
-                subtitle: Text("Cari Kod: ${f['cari_kod']}"),
+                subtitle: Text("Cari Kod: ${f['cari_kod'] ?? f['id']}"),
                 onTap: () {
-                  Navigator.pop(context); // Listeyi kapat
+                  Navigator.pop(context); // Önce seçici pencereyi kapat
+
+                  // Gelen moda göre ilgili fonksiyonu tetikliyoruz:
                   if (mod == "EKSTRE") {
-                    _ekstreSecimMenusu("EKSTRE", f); // Ekstre menüsünü aç
-                  } else {
-                    _odemeDialog(f); // Direkt ödeme ekranını aç
+                    _ekstreSecimMenusu("EKSTRE", f);
+                  } else if (mod == "ÖDEME") {
+                    _odemeDialog(f);
+                  } else if (mod == "FOTOĞRAF YÜKLE") {
+                    _direktFotoCek(f); // BURAYI EKLEDİK: Kamerayı açar ve kaydeder
                   }
                 },
               );
@@ -1411,28 +1428,7 @@ class _FirmaTanimSayfasiState extends State<FirmaTanimSayfasi> {
 
 
 
-  // 1. Firma Seçme Listesini Açan Fonksiyon (Üstteki "Fatura Foto" butonu için)
-  void _faturaFotoEkle() {
-    showModalBottomSheet(
-      context: context,
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-      builder: (context) => ListView.builder(
-        itemCount: _firmalar.length, // Sayfadaki firma listesini kullanır
-        itemBuilder: (context, i) {
-          final f = _firmalar[i];
-          return ListTile(
-            leading: const Icon(Icons.business, color: Colors.indigo),
-            title: Text(f['ad'] ?? "İsimsiz Firma"),
-            subtitle: Text("Yetkili: ${f['yetkili'] ?? '-'}"),
-            onTap: () {
-              Navigator.pop(context); // Listeyi kapat
-              _fotoSecimMenusu(f);    // Firma bilgilerini menüye gönder
-            },
-          );
-        },
-      ),
-    );
-  }
+
 
   // 2. Firmaya Özel İşlem Seçeneklerini Açan Menü
   void _fotoSecimMenusu(Map<String, dynamic> f) {
@@ -1479,108 +1475,294 @@ class _FirmaTanimSayfasiState extends State<FirmaTanimSayfasi> {
       ),
     );
   }
-  // 1. Parametreyi 'int firmaId' yerine 'String cariKod' yapıyoruz
-  Future<void> _faturayiKaydet(String path, String cariKod) async {
-    debugPrint("🚀 Fatura Yükleme Başladı. Mühür: $cariKod");
+  Future<void> _faturayiKaydet(String lokalResimYolu, String cariKod) async {
+    // 1. İşlem çarkını ekranda göster
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => const Center(child: CircularProgressIndicator()),
+    );
 
     try {
-      // 2. Storage'a Yükle (Dosya adını Cari Kod ile mühürleyelim ki karışmasın)
-      String? bulutUrl = await FirebaseFotoService().fotoYukle(
-          FotoKategori.musteri_faturalari,
-          File(path)
-      );
-
-      if (bulutUrl != null) {
-        // 3. Yerel SQLite Kaydı (Mühürlü Cari Kod ile)
-        await DatabaseHelper.instance.faturaEkle({
-          'cari_kod': cariKod,    // 🔥 firma_id yerine cari_kod
-          'dosya_yolu': bulutUrl,
-          'tarih': DateFormat('dd.MM.yyyy HH:mm').format(DateTime.now()),
-        });
-
-        // 4. Firestore Kaydı (Nokta Atışı)
-        // Doküman ID'sini Cari Kod yaptığımız ana koleksiyona gidiyoruz
-        await FirebaseFirestore.instance
-            .collection('tarim_firmalari')
-            .doc(cariKod) // 🔥 Sayı ID değil, Mühürlü Cari Kod!
-            .collection('faturalar')
-            .add({
-          'fatura_url': bulutUrl,
-          'cari_kod': cariKod,
-          'tarih': FieldValue.serverTimestamp(),
-        });
-
-        debugPrint("✅ Fatura buluta ve yerel veri tabanına işlendi.");
-        if(mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text("✅ Fatura Buluta ve Cari Hesaba İşlendi"))
-          );
-        }
+      if (kIsWeb) {
+        Navigator.pop(context);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Web üzerinden fotoğraf yükleme henüz yapılandırılmadı.")),
+        );
+        return;
       }
+
+      File dosya = File(lokalResimYolu);
+      // Klasör ismini ve dosya adını garantiye alıyoruz
+      String dosyaAdi = "faturalar/$cariKod-${DateTime.now().millisecondsSinceEpoch}.jpg";
+
+      FirebaseStorage storage = FirebaseStorage.instance;
+      Reference storageRef = storage.ref().child(dosyaAdi);
+
+      // 🔥 İPTAL HATASINI ÖNLEYEN GÜVENLİ YÜKLEME METODU:
+      // putFile işlemini doğrudan await ile bekliyoruz ki görev yarıda kesilmesin.
+      TaskSnapshot snapshot = await storageRef.putFile(dosya);
+
+      // Yükleme bittikten sonra internet linkini çekiyoruz
+      String yuklenenUrl = await snapshot.ref.getDownloadURL();
+
+      debugPrint("🔗 FATURA URL ALINDI: $yuklenenUrl");
+
+      // --- ADIM 2: CLOUD FIRESTORE'A MÜHÜRLEME ---
+      // 'tarim_firmalari' koleksiyonundaki ilgili cariKod dökümanına yazıyoruz
+      await FirebaseFirestore.instance
+          .collection('tarim_firmalari')
+          .doc(cariKod.trim().toUpperCase()) // Boşluk ve harf hatasını önlemek için
+          .set({
+        'faturalar': FieldValue.arrayUnion([yuklenenUrl]), // Linki diziye ekle
+        'son_guncelleme': DateTime.now().toIso8601String(),
+      }, SetOptions(merge: true)); // Firmanın unvanını, bakiyesini silmez, üzerine birleştirir
+
+      debugPrint("✅ FIRESTORE DÖKÜMANINA BAŞARIYLA YAZILDI");
+
+      // --- ADIM 3: ÇARKTI KAPAT VE UYARI VER ---
+      if (mounted) {
+        Navigator.pop(context); // Yükleme çarkını şimdi kapatıyoruz
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+              content: Text("Fatura başarıyla buluta kaydedildi! ✅"),
+              backgroundColor: Colors.green
+          ),
+        );
+        _verileriYukle(); // Listeyi güncelle
+      }
+
     } catch (e) {
-      debugPrint("🚨 Fatura Kayıt Hatası: $e");
+      if (mounted) Navigator.pop(context); // Hata olursa çarkı kapat
+      debugPrint("❌ KESİN HATA TESPİTİ: $e");
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Yükleme Hatası: $e"), backgroundColor: Colors.red),
+        );
+      }
     }
   }
 
-  void _faturaGalerisiniAc(Map<String, dynamic> f) {
-    String cKod = (f['cari_kod'] ?? f['id']).toString();
+// Üstteki genel butona basıldığında önce firma seçtiren fonksiyon
+  void _faturaFotoEkle() {
+    _firmaSeciciDialog("FOTOĞRAF YÜKLE");
+  }
+
+  void _faturaGalerisiniAc(Map<String, dynamic> firma) async {
+    String temizCari = (firma['cari_kod'] ?? firma['id'] ?? "").toString().trim().toUpperCase();
+
+    // Alt panelin kendi içinde listeyi tazeleyebilmesi için StatefulBuilder kullanıyoruz
+    if (!mounted) return;
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
-      backgroundColor: Colors.black,
-      builder: (context) => StreamBuilder<QuerySnapshot>(
-        stream: FirebaseFirestore.instance
-            .collection('fatura_fotograflari')
-            .where('cari_kod', isEqualTo: cKod)
-            .snapshots(),
-        builder: (context, snapshot) {
-          if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
-          var docs = snapshot.data!.docs;
-          return Column(
-            children: [
-              AppBar(title: Text("${f['ad']} - Galeri"), backgroundColor: Colors.transparent, foregroundColor: Colors.white),
-              Expanded(
-                child: docs.isEmpty
-                    ? const Center(child: Text("Fatura yok.", style: TextStyle(color: Colors.white)))
-                    : GridView.builder(
-                  padding: const EdgeInsets.all(10),
-                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 2, crossAxisSpacing: 10, mainAxisSpacing: 10),
-                  itemCount: docs.length,
-                  itemBuilder: (context, i) {
-                    var data = docs[i].data() as Map<String, dynamic>;
-                    return InkWell(
-                      onTap: () => _tamEkranGoster(data['url']),
-                      child: Image.network(data['url'], fit: BoxFit.cover),
-                    );
-                  },
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (context) => StatefulBuilder(
+        builder: (context, setModalState) {
+
+          // Faturaları yükleme işini asenkron olarak bu fonksiyon halledecek
+          Future<List<String>> _faturalariGetir() async {
+            List<String> linkler = [];
+            try {
+              var doc = await FirebaseFirestore.instance.collection('tarim_firmalari').doc(temizCari).get();
+              if (doc.exists && doc.data()?['faturalar'] != null) {
+                linkler = List<String>.from(doc.data()?['faturalar']);
+              }
+            } catch (e) {
+              debugPrint("Buluttan fatura çekilemedi: $e");
+            }
+
+            if (linkler.isEmpty) {
+              if (firma['foto'] != null && firma['foto'].toString().isNotEmpty) {
+                try {
+                  List<dynamic> decoded = jsonDecode(firma['foto'].toString());
+                  linkler = decoded.map((e) => e.toString()).toList();
+                } catch (_) {
+                  linkler.add(firma['foto'].toString());
+                }
+              }
+            }
+            return linkler;
+          }
+
+          return Container(
+            height: MediaQuery.of(context).size.height * 0.75,
+            padding: const EdgeInsets.all(20),
+            child: Column(
+              children: [
+                Text(
+                    "${firma['ad']} - FATURA DOSYALARI",
+                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.indigo)
                 ),
-              ),
-            ],
+                const Divider(),
+                Expanded(
+                  child: FutureBuilder<List<String>>(
+                    future: _faturalariGetir(),
+                    builder: (context, snapshot) {
+                      if (snapshot.connectionState == ConnectionState.waiting) {
+                        return const Center(child: CircularProgressIndicator());
+                      }
+
+                      final faturaLinkleri = snapshot.data ?? [];
+
+                      if (faturaLinkleri.isEmpty) {
+                        return const Center(
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(Icons.broken_image, size: 50, color: Colors.grey),
+                              SizedBox(height: 10),
+                              Text("Bu firmaya ait eklenmiş fatura dosyası bulunamadı.", style: TextStyle(color: Colors.grey)),
+                            ],
+                          ),
+                        );
+                      }
+
+                      return GridView.builder(
+                        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: 2,
+                          crossAxisSpacing: 10,
+                          mainAxisSpacing: 10,
+                        ),
+                        itemCount: faturaLinkleri.length,
+                        itemBuilder: (context, idx) {
+                          String link = faturaLinkleri[idx];
+                          return Stack(
+                            children: [
+                              // --- FATURA RESMİ ---
+                              Positioned.fill(
+                                child: ClipRRect(
+                                  borderRadius: BorderRadius.circular(10),
+                                  child: GestureDetector(
+                                    onTap: () {
+                                      showDialog(
+                                        context: context,
+                                        builder: (c) => Dialog(child: Image.network(link, fit: BoxFit.contain)),
+                                      );
+                                    },
+                                    child: Image.network(
+                                      link,
+                                      fit: BoxFit.cover,
+                                      loadingBuilder: (context, child, loadingProgress) {
+                                        if (loadingProgress == null) return child;
+                                        return const Center(child: CircularProgressIndicator());
+                                      },
+                                      errorBuilder: (c, e, s) => const Center(child: Icon(Icons.error, color: Colors.red)),
+                                    ),
+                                  ),
+                                ),
+                              ),
+
+                              // --- SAĞ ÜST KÖŞEDEKİ KIRMIZI SİLME BUTONU ---
+                              Positioned(
+                                top: 5,
+                                right: 5,
+                                child: CircleAvatar(
+                                  backgroundColor: Colors.black.withOpacity(0.6),
+                                  radius: 16,
+                                  child: IconButton(
+                                    padding: EdgeInsets.zero,
+                                    icon: const Icon(Icons.delete_forever, color: Colors.redAccent, size: 20),
+                                    onPressed: () {
+                                      // Silme onay diyalogunu çağırıyoruz, bitince modal ekranı tazeliyoruz
+                                      _faturaSilOnay(link, temizCari, () {
+                                        setModalState(() {}); // Arayüzü anlık günceller
+                                        _verileriYukle();     // Ana sayfayı arkada günceller
+                                      });
+                                    },
+                                  ),
+                                ),
+                              ),
+                            ],
+                          );
+                        },
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
           );
         },
       ),
     );
   }
-// --- SİLME ONAY DİALOGU ---
-  void _faturaSilOnay(int faturaId, VoidCallback onDone) {
+
+  // --- MÜHÜRLÜ YENİ FATURA SİLME DIALOGU (URL BAZLI) ---
+  void _faturaSilOnay(String faturaUrl, String cariKod, VoidCallback onDone) {
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
+      builder: (diagContext) => AlertDialog(
         title: const Text("Faturayı Sil"),
-        content: const Text("Bu fatura fotoğrafı kalıcı olarak silinecek. Emin misiniz?"),
+        content: const Text("Bu fatura fotoğrafı hem buluttan hem de yerel hafızadan kalıcı olarak silinecek. Emin misiniz?"),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text("VAZGEÇ")),
+          TextButton(onPressed: () => Navigator.pop(diagContext), child: const Text("VAZGEÇ")),
           ElevatedButton(
               style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
               onPressed: () async {
-                await DatabaseHelper.instance.faturaSil(faturaId);
-                Navigator.pop(context);
-                onDone(); // Galeriyi tazele
-                ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text("Fatura silindi."), backgroundColor: Colors.orange)
-                );
+                // İşlem çarkını göster
+                showDialog(context: context, builder: (c) => const Center(child: CircularProgressIndicator()));
+
+                try {
+                  // ADIM 1: Firebase Storage Dosyasını Köklü Sil
+                  try {
+                    Reference storageRef = FirebaseStorage.instance.refFromURL(faturaUrl);
+                    await storageRef.delete();
+                    debugPrint("🔥 Storage dosya silindi.");
+                  } catch (e) {
+                    debugPrint("Storage dosyası zaten yok veya silinemedi: $e");
+                  }
+
+                  // ADIM 2: Firestore Listesinden Linki Kaldır
+                  await FirebaseFirestore.instance
+                      .collection('tarim_firmalari')
+                      .doc(cariKod)
+                      .update({
+                    'faturalar': FieldValue.arrayRemove([faturaUrl])
+                  });
+                  debugPrint("🔥 Firestore array linki silindi.");
+
+                  // ADIM 3: SQLite Yerel Veri Tabanından Temizle
+                  if (!kIsWeb) {
+                    final db = await DatabaseHelper.instance.database;
+                    final sorgu = await db.query('tarim_firmalari', where: 'cari_kod = ?', whereArgs: [cariKod]);
+
+                    if (sorgu.isNotEmpty && sorgu.first['foto'] != null) {
+                      List<dynamic> yerelList = [];
+                      try {
+                        yerelList = jsonDecode(sorgu.first['foto'].toString());
+                      } catch (_) {}
+
+                      // Sileceğimiz linki diziden eliyoruz
+                      yerelList.remove(faturaUrl);
+
+                      await db.update(
+                        'tarim_firmalari',
+                        {'foto': yerelList.isEmpty ? null : jsonEncode(yerelList)},
+                        where: 'cari_kod = ?',
+                        whereArgs: [cariKod],
+                      );
+                      debugPrint("🔥 SQLite yerel veri güncellendi.");
+                    }
+                  }
+
+                  // Pencereleri güvenle kapat ve yenile
+                  if (mounted) {
+                    Navigator.pop(context); // Çarkı kapat
+                    Navigator.pop(diagContext); // Silme uyarısını kapat
+                    onDone(); // Galeriyi anlık tazele
+
+                    ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text("Fatura sistemden kökten silindi."), backgroundColor: Colors.orange)
+                    );
+                  }
+
+                } catch (e) {
+                  if (mounted) Navigator.pop(context); // Hata durumunda çarkı kapat
+                  debugPrint("❌ FATURA SİLME HATASI: $e");
+                }
               },
-              child: const Text("SİL")
+              child: const Text("KÖKTEN SİL", style: TextStyle(color: Colors.white))
           ),
         ],
       ),

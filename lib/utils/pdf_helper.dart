@@ -127,7 +127,7 @@ class PdfHelper {
 
           pw.SizedBox(height: 20),
 
-          // 💰 HESAP ÖZETİ (BURAYI DEĞİŞTİR)
+          // 💰 HESAP ÖZETİ
           pw.Row(
             mainAxisAlignment: pw.MainAxisAlignment.end,
             children: [
@@ -143,12 +143,12 @@ class PdfHelper {
                   children: [
                     pw.Text(
                       "Toplam Satış: ${formatPara(toplamBorc)} TL",
-                      style: pw.TextStyle(font: boldFont, color: PdfColors.red900), // 🔥 KIRMIZI
+                      style: pw.TextStyle(font: boldFont, color: PdfColors.red900),
                     ),
                     pw.SizedBox(height: 2),
                     pw.Text(
                       "Toplam Tahsilat: ${formatPara(toplamAlacak)} TL",
-                      style: pw.TextStyle(font: boldFont, color: PdfColors.green900), // 🔥 YEŞİL
+                      style: pw.TextStyle(font: boldFont, color: PdfColors.green900),
                     ),
                     pw.Divider(),
                     pw.Text(
@@ -181,7 +181,7 @@ class PdfHelper {
     );
   }
 
-  // ✅ Tablo Hücresi Yardımcı Fonksiyonu (Kod kalabalığını önler)
+  // ✅ Tablo Hücresi Yardımcı Fonksiyonu
   static pw.Widget _pdfHucre(String metin, pw.Font font, PdfColor renk, bool isHeader) {
     return pw.Padding(
       padding: const pw.EdgeInsets.all(5),
@@ -192,6 +192,7 @@ class PdfHelper {
       ),
     );
   }
+
   // ✅ Stok Raporu Fonksiyonu
   static Future<void> stokRaporuGoster(
       BuildContext context,
@@ -262,7 +263,7 @@ class PdfHelper {
     );
   }
 
-  // ✅ BİÇER MÜŞTERİ EKSTRESİ (HASAT + TAHSİLAT) - BAŞLIKLAR KORUNDU VE VERİLER BAĞLANDI
+  // ✅ BİÇER MÜŞTERİ EKSTRESİ
   static Future<void> bicerMusteriEkstresiGoster(
       BuildContext context,
       String musteriAd,
@@ -272,7 +273,6 @@ class PdfHelper {
     final font = await PdfGoogleFonts.robotoRegular();
     final boldFont = await PdfGoogleFonts.robotoBold();
 
-    // Logo yükleme
     pw.ImageProvider? imageProvider;
     try {
       imageProvider = await flutterImageProvider(const AssetImage('assets/images/logo.png'));
@@ -286,7 +286,6 @@ class PdfHelper {
     double toplamBorc = 0;
     double toplamAlacak = 0;
 
-    // 1. HESAPLAMA MANTIĞI (Görseldeki miktar ve tip sütunlarına göre)
     for (var h in hareketler) {
       double miktar = double.tryParse(h['miktar']?.toString() ?? '0') ?? 0.0;
       String tip = (h['tip'] ?? '').toString().toUpperCase();
@@ -303,14 +302,12 @@ class PdfHelper {
         pageFormat: PdfPageFormat.a4,
         theme: pw.ThemeData.withFont(base: font, bold: boldFont),
         build: (context) => [
-          // SENİN BAŞLIK METODUN - TARİH VE LOGO İLE
           if (imageProvider != null) _pdfBicerBaslik(imageProvider, boldFont, font, tarihFormati),
 
           pw.SizedBox(height: 10),
           pw.Text("Müşteri: ${musteriAd.toUpperCase()}", style: pw.TextStyle(fontSize: 14, font: boldFont)),
           pw.SizedBox(height: 15),
 
-          // 2. TABLO VERİLERİ (Sütunlar image_76da35.png ile tam uyumlu)[cite: 1]
           pw.Table(
             border: pw.TableBorder.all(color: PdfColors.grey300),
             columnWidths: {
@@ -337,7 +334,7 @@ class PdfHelper {
                 return pw.TableRow(
                   children: [
                     _pdfHucre(h['tarih'] ?? "", font, PdfColors.black, false),
-                    _pdfHucre(h['aciklama'] ?? "-", font, PdfColors.black, false), // Veritabanındaki açıklama[cite: 1]
+                    _pdfHucre(h['aciklama'] ?? "-", font, PdfColors.black, false),
                     _pdfHucre(tip, font, PdfColors.black, false),
                     _pdfHucre(
                         "${formatPara(tutar)} TL",
@@ -353,7 +350,6 @@ class PdfHelper {
 
           pw.SizedBox(height: 20),
 
-          // 3. SENİN ÖZET PANELİN - RENKLER VE HESAPLAR DOĞRU
           pw.Row(
             mainAxisAlignment: pw.MainAxisAlignment.end,
             children: [
@@ -386,7 +382,6 @@ class PdfHelper {
       ),
     );
 
-    // 4. ÖNİZLEME EKRANI (NAVIGATOR İLE)
     await Navigator.push(
       context,
       MaterialPageRoute(
@@ -397,8 +392,6 @@ class PdfHelper {
       ),
     );
   }
-
-  // YARDIMCI METODLAR (Bunlar static olarak PdfHelper içinde kalmalı)
 
   static pw.Widget _pdfBicerBaslik(pw.ImageProvider image, pw.Font boldFont, pw.Font font, String tarih) {
     return pw.Row(
@@ -430,7 +423,6 @@ class PdfHelper {
     );
   }
 
-  // Özet satırı için yardımcı widget
   static pw.Widget _ozetSatiri(String baslik, String deger, PdfColor renk, pw.Font font, {double fontSize = 10}) {
     return pw.Row(
       mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
@@ -440,10 +432,11 @@ class PdfHelper {
       ],
     );
   }
-  // ✅ TARIM FİRMA EKSTRESİ (MÜHÜRLÜ VE CARİ KODLU)
+
+  // ✅ TARIM FİRMA EKSTRESİ
   static Future<void> tarimFirmaEkstresiGoster(
       BuildContext context,
-      String firmaAdi, // Parametre ismimiz bu
+      String firmaAdi,
       List<Map<String, dynamic>> hareketler,
       [double bakiye = 0.0]
       ) async {
@@ -451,7 +444,6 @@ class PdfHelper {
     final font = await PdfGoogleFonts.robotoRegular();
     final boldFont = await PdfGoogleFonts.robotoBold();
 
-    // Cari kodu ilk hareketten veya güvenli bir şekilde alalım
     String cariKod = hareketler.isNotEmpty ? (hareketler.first['cari_kod'] ?? "-") : "-";
 
     final imageProvider = await flutterImageProvider(const AssetImage('assets/images/logo.png'));
@@ -466,7 +458,6 @@ class PdfHelper {
         pageFormat: PdfPageFormat.a4,
         theme: pw.ThemeData.withFont(base: font, bold: boldFont),
         build: (context) => [
-          // Başlık ve Logo
           pw.Row(
             mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
             children: [
@@ -496,17 +487,15 @@ class PdfHelper {
           pw.Divider(thickness: 2, color: PdfColors.blue900),
           pw.SizedBox(height: 10),
 
-          // FİRMA VE CARİ KOD BİLGİSİ
           pw.Row(
             mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
             children: [
-              pw.Text("Firma: ${firmaAdi.toUpperCase()}", style: pw.TextStyle(fontSize: 14, font: boldFont)), // firmaAd değil firmaAdi yaptık
+              pw.Text("Firma: ${firmaAdi.toUpperCase()}", style: pw.TextStyle(fontSize: 14, font: boldFont)),
               pw.Text("Cari Kod: $cariKod", style: pw.TextStyle(fontSize: 12, font: boldFont, color: PdfColors.grey700)),
             ],
           ),
           pw.SizedBox(height: 15),
 
-          // Tablo Yapısı
           pw.Table(
             border: pw.TableBorder.all(color: PdfColors.grey300),
             columnWidths: {
@@ -527,21 +516,15 @@ class PdfHelper {
                   _pdfHucre("BAKİYE", boldFont, PdfColors.white, true),
                 ],
               ),
-              // PDF içindeki map döngüsünü bu mantıkla güncelle:
               ...hareketler.map((h) {
                 double tutar = double.tryParse((h['tutar'] ?? '0').toString()) ?? 0;
-
-                // Tipi temizle: Boşlukları at, büyük harfe çevir
                 String tip = (h['tip'] ?? "").toString().trim().toUpperCase();
-
-                // ÖDEME tespiti: İçinde ÖDEME, ODEME veya TAHSİLAT geçiyorsa ödemedir
                 bool isOdeme = tip.contains("ÖDEME") || tip.contains("ODEME") || tip.contains("TAHSİLAT");
 
                 if (isOdeme) {
                   toplamOdeme += tutar;
                   yuruyenBakiye -= tutar;
                 } else {
-                  // İçinde ödeme geçmeyen her şey (ALIM, GÜBRE, TOHUM vb.) borçtur
                   toplamAlim += tutar;
                   yuruyenBakiye += tutar;
                 }
@@ -561,7 +544,6 @@ class PdfHelper {
 
           pw.SizedBox(height: 20),
 
-          // Alt Özet
           pw.Row(
             mainAxisAlignment: pw.MainAxisAlignment.end,
             children: [
@@ -584,10 +566,157 @@ class PdfHelper {
       ),
     );
 
-    // Önizleme
     await Navigator.push(context, MaterialPageRoute(builder: (context) => Scaffold(
-      appBar: AppBar(title: Text("$firmaAdi - Ekstre"), backgroundColor: Colors.blue[900]), // firmaAd düzeltildi
+      appBar: AppBar(title: Text("$firmaAdi - Ekstre"), backgroundColor: Colors.blue[900]),
       body: PdfPreview(build: (format) => pdf.save()),
     )));
+  }
+
+  // 🔥 YENİ EKLENEN METOD: EMANET / TESLİMAT RAPORU FONKSİYONU
+  static Future<void> teslimatRaporuGoster(
+      BuildContext context,
+      List<Map<String, dynamic>> teslimatListesi,
+      String filtreDurumu
+      ) async {
+    final pdf = pw.Document();
+    final font = await PdfGoogleFonts.robotoRegular();
+    final boldFont = await PdfGoogleFonts.robotoBold();
+
+    pw.ImageProvider? imageProvider;
+    try {
+      imageProvider = await flutterImageProvider(const AssetImage('assets/images/logo.png'));
+    } catch (e) {
+      print("Logo yuklenemedi: $e");
+    }
+
+    DateTime simdi = DateTime.now();
+    String formatliTarih = "${simdi.day.toString().padLeft(2, '0')}.${simdi.month.toString().padLeft(2, '0')}.${simdi.year}";
+
+    double genelToplam = 0;
+    for (var h in teslimatListesi) {
+      double tutar = double.tryParse((h['tutar'] ?? h['toplam_tutar'] ?? '0').toString()) ?? 0;
+      genelToplam += tutar;
+    }
+
+    PdfColor temaRengi = filtreDurumu == 'TESLİM EDİLMEDİ' ? PdfColors.orange900 : PdfColors.green900;
+
+    pdf.addPage(
+      pw.MultiPage(
+        pageFormat: PdfPageFormat.a4,
+        theme: pw.ThemeData.withFont(base: font, bold: boldFont),
+        build: (context) => [
+          // Başlık Alanı
+          pw.Row(
+            mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+            children: [
+              pw.Row(
+                children: [
+                  if (imageProvider != null) pw.Container(width: 45, height: 45, child: pw.Image(imageProvider)),
+                  pw.SizedBox(width: 10),
+                  pw.Column(
+                    crossAxisAlignment: pw.CrossAxisAlignment.start,
+                    children: [
+                      pw.Text("EVREN TARIM MARKET", style: pw.TextStyle(fontSize: 18, font: boldFont, color: temaRengi)),
+                      pw.Text("Emanet ve Teslimat Takip Sistemi", style: pw.TextStyle(fontSize: 10, font: font)),
+                    ],
+                  ),
+                ],
+              ),
+              pw.Column(
+                crossAxisAlignment: pw.CrossAxisAlignment.end,
+                children: [
+                  pw.Text("TESLİMAT DURUM RAPORU", style: pw.TextStyle(fontSize: 12, font: boldFont)),
+                  pw.Text("Durum: $filtreDurumu", style: pw.TextStyle(fontSize: 10, font: boldFont, color: temaRengi)),
+                  pw.Text("Tarih: $formatliTarih", style: pw.TextStyle(fontSize: 9)),
+                ],
+              ),
+            ],
+          ),
+          pw.SizedBox(height: 10),
+          pw.Divider(thickness: 1.5, color: temaRengi),
+          pw.SizedBox(height: 10),
+
+          // Tablo Listesi
+          pw.Table(
+            border: pw.TableBorder.all(color: PdfColors.grey300),
+            columnWidths: {
+              0: const pw.FlexColumnWidth(3.5), // Müşteri Adı
+              1: const pw.FlexColumnWidth(4.5), // Açıklama / Ürün
+              2: const pw.FlexColumnWidth(2.5), // Tarih
+              3: const pw.FlexColumnWidth(2.5), // Tutar
+            },
+            children: [
+              // Başlık Satırı
+              pw.TableRow(
+                decoration: pw.BoxDecoration(color: temaRengi),
+                children: [
+                  _pdfHucre("MÜŞTERİ ADI", boldFont, PdfColors.white, true),
+                  _pdfHucre("AÇIKLAMA", boldFont, PdfColors.white, true),
+                  _pdfHucre("İŞLEM TARİHİ", boldFont, PdfColors.white, true),
+                  _pdfHucre("TUTAR", boldFont, PdfColors.white, true),
+                ],
+              ),
+              // Veriler
+              ...teslimatListesi.map((h) {
+                double t = double.tryParse((h['tutar'] ?? h['toplam_tutar'] ?? '0').toString()) ?? 0;
+                return pw.TableRow(
+                  children: [
+                    _pdfHucre((h['musteri_ad'] ?? "Bilinmeyen").toString().toUpperCase(), font, PdfColors.black, false),
+                    _pdfHucre((h['aciklama'] ?? "-").toString().toUpperCase(), font, PdfColors.black, false),
+                    _pdfHucre(h['tarih'] ?? "-", font, PdfColors.black, false),
+                    _pdfHucre("${formatPara(t)} TL", boldFont, PdfColors.black, false),
+                  ],
+                );
+              }).toList(),
+            ],
+          ),
+
+          pw.SizedBox(height: 20),
+
+          // Alt Özet Kartı
+          pw.Row(
+            mainAxisAlignment: pw.MainAxisAlignment.end,
+            children: [
+              pw.Container(
+                width: 220,
+                padding: const pw.EdgeInsets.all(10),
+                decoration: pw.BoxDecoration(
+                  border: pw.Border.all(color: temaRengi, width: 1),
+                  borderRadius: const pw.BorderRadius.all(pw.Radius.circular(6)),
+                ),
+                child: _ozetSatiri(
+                    "GENEL TOPLAM:",
+                    "${formatPara(genelToplam)} TL",
+                    temaRengi,
+                    boldFont,
+                    fontSize: 11
+                ),
+              ),
+            ],
+          ),
+          pw.SizedBox(height: 40),
+          pw.Center(
+              child: pw.Text(
+                  "Bu döküm Evren Tarım Otomasyonu tarafından anlık üretilmiştir.",
+                  style: const pw.TextStyle(fontSize: 8, color: PdfColors.grey600)
+              )
+          ),
+        ],
+      ),
+    );
+
+    // Önizleme Sayfa Yönlendirmesi
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => Scaffold(
+          appBar: AppBar(
+              title: Text("$filtreDurumu - Rapor Önizleme"),
+              backgroundColor: filtreDurumu == 'TESLİM EDİLMEDİ' ? Colors.orange[800] : Colors.green[800]
+          ),
+          body: PdfPreview(build: (format) => pdf.save(), canDebug: false),
+        ),
+      ),
+    );
   }
 }

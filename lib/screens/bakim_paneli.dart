@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'dart:io';
-// Tek bir import biçimi kullanmak daha güvenlidir
+import 'package:intl/intl.dart';
 import '../db/database_helper.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 
@@ -15,6 +15,11 @@ class BakimPaneli extends StatefulWidget {
 class _BakimPaneliState extends State<BakimPaneli> {
   List<Map<String, dynamic>> _bakimlar = [];
   double _toplamEkstraMasraf = 0;
+
+  // 🔥 EKSİK OLAN DEĞİŞKENLER BURAYA EKLENDİ:
+  final TextEditingController _tutarC = TextEditingController();
+  final TextEditingController _aciklamaC = TextEditingController();
+  String _seciliUsta = "MOTOR USTASI"; // Varsayılan seçim
 
   final List<String> _ustalar = [
     "MOTOR USTASI", "KAPORTACI", "BOYACI",
@@ -37,27 +42,69 @@ class _BakimPaneliState extends State<BakimPaneli> {
     return Image.file(File(path));
   }
 
-  Future<void> _verileriYukle() async {
-    // widget.arac['id'] değerinin int olduğundan emin olalım
-    // Eğer String geliyorsa int'e çevirir, zaten int ise aynen bırakır.
-    final dynamic hamId = widget.arac['id'];
-    final int guvenliId = hamId is int ? hamId : int.parse(hamId.toString());
+  void _verileriYukle() async {
+    // Hem Web (Firebase ID) hem Mobil (SQLite ID) uyumluluğu için tüm ID alternatiflerini kontrol ediyoruz
+    String bicerId = (widget.arac['id'] ?? widget.arac['id_firebase'] ?? widget.arac['firebase_id'] ?? '').toString();
 
-    try {
-      // 2. Çağırırken de 'u' kullanmalısın
-      final veriler = await DatabaseHelper.instance.bakimlariGetir(guvenliId);
-
-    double toplam = 0;
-    for (var kalem in veriler) {
-    toplam += double.tryParse(kalem['tutar'].toString()) ?? 0;
+    // Eğer ID hâlâ boş veya "-1" ise ve web üzerindeysek döküman adını korumak için sağlama alıyoruz
+    if (bicerId.isEmpty || bicerId == "-1") {
+      print("⚠️ Uyarı: Geçersiz araç ID'si saptandı! (${widget.arac})");
     }
 
-    setState(() {
-    _bakimlar = veriler;
-    _toplamEkstraMasraf = toplam;
-    });
+    try {
+      // DatabaseHelper katmanındaki web uyumlu sorguyu çağırıyoruz
+      List<Map<String, dynamic>> bakimListesi =
+      await DatabaseHelper.instance.bicerBakimlariniGetir(bicerId);
+
+      double toplamMasraf = 0;
+      for (var bakim in bakimListesi) {
+        toplamMasraf += double.tryParse(bakim['tutar'].toString()) ?? 0;
+      }
+
+      setState(() {
+        _bakimlar = bakimListesi;
+        _toplamEkstraMasraf = toplamMasraf;
+      });
     } catch (e) {
-    print("Yükleme hatası: $e");
+      debugPrint("‼️ Bakım verileri arayüze yüklenirken hata: $e");
+    }
+  }
+
+  void _bakimEkle() async {
+    if (_tutarC.text.isEmpty || _aciklamaC.text.isEmpty) return;
+
+    double tutar = double.tryParse(_tutarC.text.replaceAll(',', '.')) ?? 0.0;
+    String usta = _seciliUsta;
+    String aciklama = _aciklamaC.text.trim().toUpperCase();
+    String tarihStr = DateFormat('dd.MM.yyyy').format(DateTime.now());
+
+    String bicerId = (widget.arac['id'] ?? widget.arac['id_firebase'] ?? widget.arac['firebase_id'] ?? '').toString();
+
+    Map<String, dynamic> yeniBakim = {
+      'bicer_id': bicerId, // Hem web koleksiyon eşleşmesi hem SQLite ilişkisi için ortak alan
+      'usta': usta,
+      'aciklama': aciklama,
+      'tutar': tutar,
+      'tarih': tarihStr,
+      'is_synced': 0,
+    };
+
+    try {
+      // Web ise doğrudan Firebase'e, mobil ise yerel + arka plan senkronuna kaydeder
+      await DatabaseHelper.instance.bicerBakimEkle(yeniBakim);
+
+      _tutarC.clear();
+      _aciklamaC.clear();
+      Navigator.pop(context); // Pop-up dialog penceresini kapat
+
+      _verileriYukle(); // Ekrandaki listeyi ve maliyet grafiğini anlık tazele
+
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text("Bakım Masrafı Başarıyla İşlendi ✅"),
+        backgroundColor: Colors.green,
+      ));
+    } catch (e) {
+      debugPrint("‼️ Masraf Kaydedilirken Hata: $e");
     }
   }
 
@@ -68,92 +115,99 @@ class _BakimPaneliState extends State<BakimPaneli> {
 
     showDialog(
       context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          title: const Text("BAKIM / ONARIM GİRİŞİ",
-              style: TextStyle(fontWeight: FontWeight.bold, color: Colors.blue)),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                DropdownButton<String>(
-                  isExpanded: true,
-                  value: secilenUsta,
-                  items: _ustalar.map((e) => DropdownMenuItem(value: e, child: Text(e))).toList(),
-                  onChanged: (v) => setDialogState(() => secilenUsta = v!),
-                ),
-                const SizedBox(height: 10),
-                TextField(
-                  controller: islemC,
-                  decoration: const InputDecoration(labelText: "YAPILAN İŞLEM", border: OutlineInputBorder()),
-                  // Büyük harfe zorlama
-                ),
-                const SizedBox(height: 10),
-                TextField(
-                  controller: tutarC,
-                  keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(labelText: "ÖDENEN TUTAR", suffixText: "₺", border: OutlineInputBorder()),
-                ),
-              ],
+      builder: (context) {
+        // Dialog açıldığında usta seçimi için bir geçici değişken (Eğer sayfa genelinde tanımlı değilse)
+        String secilenUstaLocal = "MOTOR USTASI";
+
+        return StatefulBuilder(
+          builder: (context, setDialogState) => AlertDialog(
+            title: const Text("BAKIM / ONARIM GİRİŞİ",
+                style: TextStyle(fontWeight: FontWeight.bold, color: Colors.blue)),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  DropdownButton<String>(
+                    isExpanded: true,
+                    value: _ustalar.contains(secilenUstaLocal) ? secilenUstaLocal : _ustalar.first,
+                    items: _ustalar.map((e) => DropdownMenuItem(value: e, child: Text(e))).toList(),
+                    onChanged: (v) => setDialogState(() => secilenUstaLocal = v!),
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: _aciklamaC, // _aciklamaC olarak güncellendi
+                    decoration: const InputDecoration(labelText: "YAPILAN İŞLEM (AÇIKLAMA)", border: OutlineInputBorder()),
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: _tutarC, // _tutarC olarak güncellendi
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(labelText: "ÖDENEN TUTAR", suffixText: "₺", border: OutlineInputBorder()),
+                  ),
+                ],
+              ),
             ),
-          ),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(context), child: const Text("İPTAL")),
-            // bakim_paneli.dart dosyasının içinde aşağılara doğru in
-            ElevatedButton(
-              style: ElevatedButton.styleFrom(backgroundColor: Colors.blue),
-              onPressed: () async {
-                // 1. Girdileri temizle ve kontrol et
-                final islem = islemC.text.trim();
-                final tutarHam = tutarC.text.trim();
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(context), child: const Text("İPTAL")),
+              ElevatedButton(
+                style: ElevatedButton.styleFrom(backgroundColor: Colors.blue),
+                onPressed: () async {
+                  final islem = _aciklamaC.text.trim().toUpperCase();
+                  final tutarHam = _tutarC.text.trim();
 
-                if (islem.isNotEmpty && tutarHam.isNotEmpty) {
-                  try {
-                    // 2. ID ve Tutar dönüşümlerini güvenli yap
-                    final int? aracId = int.tryParse(widget.arac['id'].toString());
-                    final double? tutar = double.tryParse(tutarHam.replaceAll(',', '.')); // Virgül girilirse noktaya çevirir
+                  if (islem.isNotEmpty && tutarHam.isNotEmpty) {
+                    try {
+                      // Hem mobil hem web uyumluluğu için ID'yi string alıyoruz
+                      final String bicerId = (widget.arac['id'] ?? widget.arac['id_firebase'] ?? '').toString();
+                      final double tutar = double.tryParse(tutarHam.replaceAll(',', '.')) ?? 0.0;
+                      final String tarihStr = DateFormat('dd.MM.yyyy').format(DateTime.now());
 
-                    if (aracId == null) {
-                      print("Hata: Araç ID bulunamadı!");
-                      return;
+                      if (bicerId.isEmpty) {
+                        print("❌ Hata: Makine ID bulunamadı!");
+                        return;
+                      }
+
+                      // 💾 DATABASE_HELPER VE SİSTEM ŞEMASI İLE TAM UYUMLU PAKET:
+                      Map<String, dynamic> bakimVerisi = {
+                        'bicer_id': bicerId,         // Veritabanının beklediği ilişki sütunu
+                        'usta': secilenUstaLocal,    // DatabaseHelper'daki 'usta' sütunu
+                        'aciklama': islem,           // DatabaseHelper'daki 'aciklama' sütunu
+                        'tutar': tutar,              // Sütun adı: tutar
+                        'tarih': tarihStr,           // Biçim: dd.MM.yyyy
+                        'is_synced': 0,
+                      };
+
+                      print("💾 Kaydediliyor: $bakimVerisi");
+
+                      // Yeni yazdığımız ve hem Web/Firebase hem Mobil destekleyen fonksiyonu tetikliyoruz
+                      await DatabaseHelper.instance.bicerBakimEkle(bakimVerisi);
+
+                      if (mounted) {
+                        _aciklamaC.clear(); // Giriş kutularını temizle
+                        _tutarC.clear();
+
+                        Navigator.pop(context); // Diyaloğu kapat
+                        _verileriYukle();      // Listeyi ve Güncel Maliyeti yenile
+
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text("Bakım kaydı başarıyla eklendi. ✅"), backgroundColor: Colors.green),
+                        );
+                      }
+                    } catch (e) {
+                      print("❌ Kayıt Hatası: $e");
                     }
-
-                    // 3. Veritabanına gönderilecek paket
-                    // Sütun isimlerinin DatabaseHelper'daki 'CREATE TABLE' ile aynı olduğundan emin olun
-                    Map<String, dynamic> bakimVerisi = {
-                      'arac_id': aracId,
-                      'usta_tipi': secilenUsta,
-                      'islem_detay': islem.toUpperCase(),
-                      'tutar': tutar ?? 0.0,
-                      'tarih': DateTime.now().toString().substring(0, 10),
-                      // 'firebase_id': widget.arac['firebase_id'], // Eğer tabloda bu sütun yoksa burayı silin!
-                    };
-
-                    print("💾 Kaydediliyor: $bakimVerisi");
-
-                    await DatabaseHelper.instance.bakimEkle(bakimVerisi);
-
-                    if (mounted) {
-                      Navigator.pop(context); // Diyaloğu kapat
-                      _verileriYukle();      // Listeyi yenile
-
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text("Bakım kaydı başarıyla eklendi."), backgroundColor: Colors.green),
-                      );
-                    }
-                  } catch (e) {
-                    print("❌ Kayıt Hatası: $e");
+                  } else {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text("⚠️ İşlem açıklaması veya tutar boş olamaz!"), backgroundColor: Colors.orange),
+                    );
                   }
-                } else {
-                  // Boş alan uyarısı
-                  print("⚠️ İşlem veya tutar boş olamaz!");
-                }
-              },
-              child: const Text("FİŞİ KES", style: TextStyle(color: Colors.white)),
-            )
-          ],
-        ),
-      ),
+                },
+                child: const Text("FİŞİ KES", style: TextStyle(color: Colors.white)),
+              )
+            ],
+          ),
+        );
+      },
     );
   }
 

@@ -45,22 +45,20 @@ class _StokListesiSayfasiState extends State<StokListesiSayfasi> {
   }
 
 
-  bool _fotoVarMi(String path) {
-    // 1. Eğer web tarayıcısındaysak dosya sistemi yoktur, direkt false dön.
-    if (kIsWeb) return false;
-
-    // 2. Yol boşsa kontrol etmeye gerek yok.
+  // --- FOTOĞRAF KONTROLÜ (YENİ) ---
+  // Gelen path boş değilse ve geçerli bir yapıdaysa true döner
+  bool _fotoGecerliMi(String path) {
     if (path.isEmpty) return false;
-
-    // 3. Mobildeysek dart:io (io) üzerinden dosya var mı diye bak.
-    return io.File(path).existsSync();
+    if (path.startsWith('http://') || path.startsWith('https://')) return true; // İnternet linki ise geçerlidir
+    if (kIsWeb) return false; // Web'de yerel dosya yolu aranamaz
+    return io.File(path).existsSync(); // Mobilde yerel dosya var mı kontrolü
   }
 
-  // --- 1. FOTOĞRAF BÜYÜTME (WEB VE MOBİL UYUMLU) ---
+  // --- FOTOĞRAF BÜYÜTME (WEB VE MOBİL UYUMLU YENİ) ---
   void _fotoBuyut(String path, dynamic urunAdi) {
-    if (kIsWeb) return; // Web'de dosya sistemi olmadığı için işlemi durdur
-
     String baslik = (urunAdi ?? "Ürün Detayı").toString();
+    bool isNetwork = path.startsWith('http://') || path.startsWith('https://');
+
     showDialog(
       context: context,
       builder: (context) => Scaffold(
@@ -74,8 +72,9 @@ class _StokListesiSayfasiState extends State<StokListesiSayfasi> {
           child: InteractiveViewer(
             minScale: 0.5,
             maxScale: 5.0,
-            // BURAYA DİKKAT: File yerine io.File kullandık
-            child: Image.file(io.File(path), fit: BoxFit.contain),
+            child: isNetwork
+                ? Image.network(path, fit: BoxFit.contain) // İnternet linkiyse buluttan aç
+                : Image.file(io.File(path), fit: BoxFit.contain), // Yerel dosyaysa cihazdan aç
           ),
         ),
       ),
@@ -437,18 +436,41 @@ class _StokListesiSayfasiState extends State<StokListesiSayfasi> {
                   child: ListTile(
                     onLongPress: () => _stokSil(s['id']),
                     leading: GestureDetector(
-                      // Tıklama kontrolünü bir fonksiyon üzerinden yapıyoruz (Web'de patlamasın diye)
-                      onTap: () => _fotoVarMi(foto) ? _fotoBuyut(foto, s['urun']) : null,
+                      onTap: () => _fotoGecerliMi(foto) ? _fotoBuyut(foto, s['urun']) : null,
                       child: Container(
-                        width: 50, height: 50,
-                        decoration: BoxDecoration(color: Colors.grey[300], borderRadius: BorderRadius.circular(8)),
-                        child: _fotoVarMi(foto)
+                        width: 50,
+                        height: 50,
+                        decoration: BoxDecoration(
+                            color: Colors.grey[300],
+                            borderRadius: BorderRadius.circular(8)
+                        ),
+                        child: _fotoGecerliMi(foto)
                             ? ClipRRect(
-                            borderRadius: BorderRadius.circular(8),
-                            // File yerine io.File kullandık
-                            child: Image.file(io.File(foto), fit: BoxFit.cover)
+                          borderRadius: BorderRadius.circular(8),
+                          child: foto.startsWith('http://') || foto.startsWith('https://')
+                              ? Image.network(
+                            foto,
+                            fit: BoxFit.cover,
+                            // Resim internetten yüklenirken dönecek yükleniyor efekti:
+                            loadingBuilder: (context, child, loadingProgress) {
+                              if (loadingProgress == null) return child;
+                              return const Center(
+                                child: SizedBox(
+                                  width: 20, height: 20,
+                                  child: CircularProgressIndicator(strokeWidth: 2),
+                                ),
+                              );
+                            },
+                            // Link kırık veya yükleme hatası olursa:
+                            errorBuilder: (context, error, stackTrace) =>
+                                Icon(is2El ? Icons.handshake : Icons.fiber_new, color: is2El ? Colors.orange : Colors.blue),
+                          )
+                              : Image.file(io.File(foto), fit: BoxFit.cover), // Mobildeki eski yerel çekimler için
                         )
-                            : Icon(is2El ? Icons.handshake : Icons.fiber_new, color: is2El ? Colors.orange : Colors.blue),
+                            : Icon(
+                            is2El ? Icons.handshake : Icons.fiber_new,
+                            color: is2El ? Colors.orange : Colors.blue
+                        ),
                       ),
                     ),
                     title: RichText(text: TextSpan(children: [
